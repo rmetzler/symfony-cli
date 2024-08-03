@@ -61,6 +61,7 @@ func CommonCommands() []*console.Command {
 		localPhpRefreshCmd,
 		localProxyTLD,
 		localProxyAttachDomainCmd,
+		localProxyAttachBackendCmd,
 		localProxyDetachDomainCmd,
 		localProxyStartCmd,
 		localProxyStatusCmd,

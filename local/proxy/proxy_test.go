@@ -50,15 +50,20 @@ func (s *ProxySuite) TestProxy(c *C) {
 	defer homedir.Reset()
 	defer os.RemoveAll("testdata/.symfony5")
 
-	p := New(&Config{
-		domains: map[string]string{
-			"symfony":        "symfony_com",
-			"symfony-no-tls": "symfony_com_no_tls",
-			"symfony2":       "symfony_com2",
+	p := New(
+		&Config{
+			domains: map[string]string{
+				"symfony":        "symfony_com",
+				"symfony-no-tls": "symfony_com_no_tls",
+				"symfony2":       "symfony_com2",
+			},
+			TLD:  "wip",
+			path: "testdata/.symfony5/proxy.json",
 		},
-		TLD:  "wip",
-		path: "testdata/.symfony5/proxy.json",
-	}, ca, log.New(zerolog.New(os.Stderr), "", 0), true)
+		ca,
+		log.New(zerolog.New(os.Stderr), "", 0),
+		true,
+	)
 	os.MkdirAll("testdata/.symfony5", 0755)
 	err = p.Save()
 	c.Assert(err, IsNil)

@@ -38,6 +38,8 @@ import (
 	"github.com/symfony-cli/symfony-cli/local/html"
 	"github.com/symfony-cli/symfony-cli/local/pid"
 	"github.com/symfony-cli/symfony-cli/local/projects"
+
+	_ "github.com/gorilla/mux"
 )
 
 type Proxy struct {
@@ -46,7 +48,7 @@ type Proxy struct {
 }
 
 func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, localPort int) *goproxy.ConnectAction {
-	httpError := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
+	httpError := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, _ error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
 		}
@@ -58,6 +60,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 		if proxy.ConnectDial != nil {
 			return proxy.ConnectDial(network, addr)
 		}
+		// if proxy.Tr.DialContext != nil {
+		// 	return proxy.Tr.DialContext(ctx, network, addr)
+		// }
 		if proxy.Tr.Dial != nil {
 			return proxy.Tr.Dial(network, addr)
 		}
@@ -67,6 +72,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 	// looks like it might've been a misdirected plaintext HTTP request.
 	tlsRecordHeaderLooksLikeHTTP := func(hdr [5]byte) bool {
 		switch string(hdr[:]) {
+		// FIXME shouldn't it be OPTION instead of OPTIO
 		case "GET /", "HEAD ", "POST ", "PUT /", "OPTIO":
 			return true
 		}
@@ -225,6 +231,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 			return goproxy.MitmConnect, host
 		}
 
+		// TODO this must be configurable
 		backend := fmt.Sprintf("127.0.0.1:%d", pid.Port)
 
 		if hostPort != "443" {
@@ -338,7 +345,7 @@ function FindProxyForURL (url, host) {
 `, p.TLD, p.TLD, r.Host)))
 }
 
-func (p *Proxy) serveIndex(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) serveIndex(w http.ResponseWriter, _ *http.Request) {
 	content := ``
 
 	proxyProjects, err := ToConfiguredProjects()

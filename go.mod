@@ -9,6 +9,7 @@ require (
 	github.com/docker/docker v27.0.3+incompatible
 	github.com/elazarl/goproxy v0.0.0-20240618083138-03be62527ccb
 	github.com/fabpot/local-php-security-checker/v2 v2.1.3
+	github.com/gorilla/mux v1.8.1
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79
 	github.com/hashicorp/go-version v1.7.0
 	github.com/hashicorp/golang-lru/arc/v2 v2.0.7

@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -43,22 +44,26 @@ type Config struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
 	// only here so that we can unmarshal :(
-	TmpDomains map[string]string `json:"domains"`
-	path       string
+	TmpDomains  map[string]string `json:"domains"`
+	TmpBackends BackendConfigList `json:"backends"`
+	path        string
 
-	mu      sync.RWMutex
-	domains map[string]string
+	mu       sync.RWMutex
+	domains  map[string]string
+	backends BackendConfigList
 }
+
 
 var DefaultConfig = []byte(`{
 	"tld": "wip",
 	"host": "localhost",
 	"port": 7080,
-	"domains": {
-	}
+	"domains": {},
+	"backends": []
 }
 `)
 
+// TODO maybe use io.Reader, so we can pass the file or something else (for tests)
 func Load(homeDir string) (*Config, error) {
 	proxyFile := filepath.Join(homeDir, "proxy.json")
 	if _, err := os.Stat(proxyFile); os.IsNotExist(err) {
@@ -86,6 +91,14 @@ func Load(homeDir string) (*Config, error) {
 	} else {
 		config.SetDomains(config.TmpDomains)
 		config.TmpDomains = nil
+	}
+	if (reflect.DeepEqual(config.TmpBackends, BackendConfigList{})) {
+		// happens if one has removed the backends manually in the file
+		// or when we upgrade
+		config.backends = BackendConfigList{}
+	} else {
+		config.SetBackends(config.TmpBackends)
+		config.TmpBackends = BackendConfigList{}
 	}
 	config.path = proxyFile
 	return config, nil
@@ -116,6 +129,15 @@ func ToConfiguredProjects() (map[string]*projects.ConfiguredProject, error) {
 		}
 	}
 	return ps, nil
+}
+
+func GetConfig() (*Config, error) {
+	homeDir := util.GetHomeDir()
+	proxyConf, err := Load(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return proxyConf, nil
 }
 
 func (c *Config) Domains() map[string]string {
@@ -158,6 +180,13 @@ func (c *Config) GetDomains(dir string) []string {
 	return domains
 }
 
+// TODO do we need to implement GetBackends() ? And how should it look like?
+
+func (c *Config) GetBackends() BackendConfigList {
+	return c.backends
+}
+
+
 func (c *Config) GetReachableDomains(dir string) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -178,6 +207,12 @@ func (c *Config) GetReachableDomains(dir string) []string {
 func (c *Config) SetDomains(domains map[string]string) {
 	c.mu.Lock()
 	c.domains = domains
+	c.mu.Unlock()
+}
+
+func (c *Config) SetBackends(backends BackendConfigList) {
+	c.mu.Lock()
+	c.backends = backends
 	c.mu.Unlock()
 }
 
@@ -236,6 +271,8 @@ func (c *Config) Watch() {
 }
 
 // reloads the TLD and the domains (not the port)
+// TODO it would be nice if this would use the same loading code as the default config
+// just by using an io.Reader interface which is already implemented for files
 func (c *Config) reload() {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
@@ -246,6 +283,7 @@ func (c *Config) reload() {
 		return
 	}
 	c.SetDomains(config.TmpDomains)
+	c.SetBackends(config.TmpBackends)
 	c.mu.Lock()
 	c.TLD = config.TLD
 	c.mu.Unlock()
@@ -260,7 +298,11 @@ func (c *Config) tldMatches() goproxy.ReqConditionFunc {
 }
 
 func (c *Config) Save() error {
+	// TODO not sure why this is the case here
+	// my guess is, there should be two different kind of structs, which look similar
+	// but one is for the internal domain and one is for marshalling / unmarshalling
 	c.TmpDomains = c.domains
+	c.TmpBackends = c.backends
 	data, err := json.MarshalIndent(c, "", "    ")
 	if err != nil {
 		return errors.WithStack(err)

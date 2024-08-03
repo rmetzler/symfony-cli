@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/symfony-cli/console"
+	"github.com/symfony-cli/symfony-cli/local/proxy"
 	"gopkg.in/yaml.v2"
 )
 
@@ -48,6 +49,7 @@ type Config struct {
 	UseGzip       bool   `yaml:"use_gzip"`
 	TlsKeyLogFile string `yaml:"tls_key_log_file"`
 	NoWorkers     bool   `yaml:"no_workers"`
+	ProxyBackends proxy.BackendConfigList `yaml:"backends"`
 }
 
 type FileConfig struct {

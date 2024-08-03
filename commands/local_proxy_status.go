@@ -46,6 +46,18 @@ var localProxyStatusCmd = &console.Command{
 
 		terminal.Println()
 		terminal.Println("<info>Configured Web Servers</>")
-		return printConfiguredServers()
+		err := printConfiguredServers()
+		if err != nil {
+			return err
+		}
+		terminal.Println()
+
+		terminal.Println("<info>Configured Proxy Backends</>")
+		err = printConfiguredBackends()
+		if err != nil {
+			return err
+		}
+		terminal.Println()
+		return nil
 	},
 }

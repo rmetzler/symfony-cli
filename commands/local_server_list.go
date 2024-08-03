@@ -73,16 +73,42 @@ func printConfiguredServers() error {
 		if project.Port > 0 {
 			port = terminal.Formatf("<href=%s://127.0.0.1:%d>%d</>", project.Scheme, project.Port, project.Port)
 		}
-		table.Append([]string{dir, port, domain})
+		table.Append(dir, port, domain)
 		if len(project.Domains) > 1 {
 			for i, domain := range project.Domains {
 				if i == 0 {
 					continue
 				}
-				table.Append([]string{"", "", terminal.Formatf("<href=%s://%s>%s</>", project.Scheme, domain, domain)})
+				table.Append("", "", terminal.Formatf("<href=%s://%s>%s</>", project.Scheme, domain, domain))
 			}
 		}
 	}
+	table.Render()
+	return nil
+}
+
+func printConfiguredBackends() error {
+	table := tablewriter.NewWriter(terminal.Stdout)
+	table.SetAutoFormatHeaders(false)
+	table.SetHeader([]string{
+		terminal.Format("<header>Domain</>"),
+		terminal.Format("<header>basepath</>"),
+		terminal.Format("<header>backendBaseUrl</>"),
+	})
+
+	config, err := proxy.GetConfig()
+	if err != nil {
+		return err
+	}
+
+	for _, b := range config.GetBackends() {
+		table.Append(
+			b.Domain,
+			b.Basepath,
+			b.BackendBaseUrl,
+		)
+	}
+
 	table.Render()
 	return nil
 }
