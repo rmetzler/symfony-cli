@@ -44,7 +44,11 @@ var localServerListCmd = &console.Command{
 func printConfiguredServers() error {
 	table := tablewriter.NewWriter(terminal.Stdout)
 	table.SetAutoFormatHeaders(false)
-	table.SetHeader([]string{terminal.Format("<header>Directory</>"), terminal.Format("<header>Port</>"), terminal.Format("<header>Domains</>")})
+	table.SetHeader([]string{
+		terminal.Format("<header>Directory</>"),
+		terminal.Format("<header>Port</>"),
+		terminal.Format("<header>Domains</>"),
+	})
 
 	proxyProjects, err := proxy.ToConfiguredProjects()
 	if err != nil {
@@ -73,13 +77,16 @@ func printConfiguredServers() error {
 		if project.Port > 0 {
 			port = terminal.Formatf("<href=%s://127.0.0.1:%d>%d</>", project.Scheme, project.Port, project.Port)
 		}
-		table.Append(dir, port, domain)
+		table.Append([]string{dir, port, domain})
 		if len(project.Domains) > 1 {
 			for i, domain := range project.Domains {
 				if i == 0 {
 					continue
 				}
-				table.Append("", "", terminal.Formatf("<href=%s://%s>%s</>", project.Scheme, domain, domain))
+				table.Append([]string{
+					"", "",
+					terminal.Formatf("<href=%s://%s>%s</>",
+					project.Scheme, domain, domain)})
 			}
 		}
 	}
@@ -102,11 +109,11 @@ func printConfiguredBackends() error {
 	}
 
 	for _, b := range config.GetBackends() {
-		table.Append(
+		table.Append([]string{
 			b.Domain,
 			b.Basepath,
 			b.BackendBaseUrl,
-		)
+	})
 	}
 
 	table.Render()

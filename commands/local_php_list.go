@@ -77,7 +77,7 @@ var localPhpListCmd = &console.Command{
 			if v.PHPPath == currentPHPPath {
 				version = terminal.Format("<options=reverse>" + version + "</>")
 			}
-			table.Append(version, v.Path, phpPath, fpmPath, cgiPath, v.ServerTypeName(), system)
+			table.Append([]string{version, v.Path, phpPath, fpmPath, cgiPath, v.ServerTypeName(), system})
 		}
 		table.Render()
 
