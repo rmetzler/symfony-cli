@@ -187,7 +187,6 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		goproxy.HTTPMitmConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
 	}
 
-
 	fmt.Println(proxyTLSConfig)
 
 	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,26 +206,42 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		http.Error(w, "Not Found", 404)
 	})
 
+	// TODO currently the proxy is not recreated when the config changes
+	backends := BackendConfigList{BackendConfig{
+			Basepath: "/httpbin",
+			BackendBaseUrl: "https://httpbin.org",
 
+	}}
 
-	proxy.OnRequest(goproxy.UrlHasPrefix("/httpbin")).Do(
-		goproxy.FuncReqHandler(
-			func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	for _, b := range backends {
+	// for _, b := range config.backends {
+		fmt.Printf("\n\nset up proxy handler for %v\n\n", b)
+		var prefix string
+		if (b.Domain == "") || (b.Domain == "*") {
+			prefix = b.Basepath
+		} else {
+			tld := ".wip"
+			prefix = b.Domain + tld + b.Basepath
+		}
+		fmt.Println("prefix =", prefix)
 
-				regex := regexp.MustCompile(`^/httpbin`)
-				baseurl := "https://httpbin.org"
-				urlString := regex.ReplaceAllLiteralString(req.URL.Path, baseurl)
+		proxy.OnRequest(goproxy.UrlHasPrefix(prefix)).Do(
+			goproxy.FuncReqHandler(
+				func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 
-				url, err := url.Parse(urlString)
-				if err != nil {
-					return req, &http.Response{StatusCode: http.StatusInternalServerError}
-				}
-				req.Host = url.Host
-				req.URL = url
-				req.Header.Add("X-Via", "symfony-cli")
-				return req, nil
-			}))
+					regex := regexp.MustCompile(`^` + b.Basepath)
+					urlString := regex.ReplaceAllLiteralString(req.URL.Path, b.BackendBaseUrl)
 
+					url, err := url.Parse(urlString)
+					if err != nil {
+						return req, &http.Response{StatusCode: http.StatusInternalServerError}
+					}
+					req.Host = url.Host
+					req.URL = url
+					req.Header.Add("X-Via", "symfony-cli")
+					return req, nil
+				}))
+	}
 
 	// cond := proxy.OnRequest(config.tldMatches())
 	// cond.HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
