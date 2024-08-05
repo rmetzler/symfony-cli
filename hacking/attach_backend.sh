@@ -12,6 +12,6 @@ $SYMFONY_BIN proxy:status
 
 cat $PROXY_JSON
 
-$CURL http://test.wip
+# $CURL https://test.wip
 
 $CURL http://test.wip/httpbin/get

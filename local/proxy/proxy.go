@@ -23,14 +23,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/elazarl/goproxy"
 	"github.com/pkg/errors"
@@ -47,107 +46,107 @@ type Proxy struct {
 	proxy *goproxy.ProxyHttpServer
 }
 
-func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, localPort int) *goproxy.ConnectAction {
-	httpError := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, _ error) {
-		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
-			ctx.Warnf("Error responding to client: %s", err)
-		}
-		if err := w.Close(); err != nil {
-			ctx.Warnf("Error closing client connection: %s", err)
-		}
-	}
-	connectDial := func(proxy *goproxy.ProxyHttpServer, network, addr string) (c net.Conn, err error) {
-		if proxy.ConnectDial != nil {
-			return proxy.ConnectDial(network, addr)
-		}
-		// if proxy.Tr.DialContext != nil {
-		// 	return proxy.Tr.DialContext(ctx, network, addr)
-		// }
-		if proxy.Tr.Dial != nil {
-			return proxy.Tr.Dial(network, addr)
-		}
-		return net.Dial(network, addr)
-	}
-	// tlsRecordHeaderLooksLikeHTTP reports whether a TLS record header
-	// looks like it might've been a misdirected plaintext HTTP request.
-	tlsRecordHeaderLooksLikeHTTP := func(hdr [5]byte) bool {
-		switch string(hdr[:]) {
-		// FIXME shouldn't it be OPTION instead of OPTIO
-		case "GET /", "HEAD ", "POST ", "PUT /", "OPTIO":
-			return true
-		}
-		return false
-	}
-	return &goproxy.ConnectAction{
-		Action: goproxy.ConnectHijack,
-		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
-			ctx.Logf("Hijacking CONNECT")
-			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
+// func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, localPort int) *goproxy.ConnectAction {
+// 	httpError := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, _ error) {
+// 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
+// 			ctx.Warnf("Error responding to client: %s", err)
+// 		}
+// 		if err := w.Close(); err != nil {
+// 			ctx.Warnf("Error closing client connection: %s", err)
+// 		}
+// 	}
+// 	connectDial := func(proxy *goproxy.ProxyHttpServer, network, addr string) (c net.Conn, err error) {
+// 		if proxy.ConnectDial != nil {
+// 			return proxy.ConnectDial(network, addr)
+// 		}
+// 		// if proxy.Tr.DialContext != nil {
+// 		// 	return proxy.Tr.DialContext(ctx, network, addr)
+// 		// }
+// 		if proxy.Tr.Dial != nil {
+// 			return proxy.Tr.Dial(network, addr)
+// 		}
+// 		return net.Dial(network, addr)
+// 	}
+// 	// tlsRecordHeaderLooksLikeHTTP reports whether a TLS record header
+// 	// looks like it might've been a misdirected plaintext HTTP request.
+// 	tlsRecordHeaderLooksLikeHTTP := func(hdr [5]byte) bool {
+// 		switch string(hdr[:]) {
+// 		// FIXME shouldn't it be OPTION instead of OPTIO
+// 		case "GET /", "HEAD ", "POST ", "PUT /", "OPTIO":
+// 			return true
+// 		}
+// 		return false
+// 	}
+// 	return &goproxy.ConnectAction{
+// 		Action: goproxy.ConnectHijack,
+// 		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
+// 			ctx.Logf("Hijacking CONNECT")
+// 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
-			proxyClientTls := tls.Server(proxyClient, tlsConfig)
-			if err := proxyClientTls.Handshake(); err != nil {
-				defer proxyClient.Close()
-				if re, ok := err.(tls.RecordHeaderError); ok && re.Conn != nil && tlsRecordHeaderLooksLikeHTTP(re.RecordHeader) {
-					io.WriteString(proxyClient, "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n")
-					return
-				}
+// 			proxyClientTls := tls.Server(proxyClient, tlsConfig)
+// 			if err := proxyClientTls.Handshake(); err != nil {
+// 				defer proxyClient.Close()
+// 				if re, ok := err.(tls.RecordHeaderError); ok && re.Conn != nil && tlsRecordHeaderLooksLikeHTTP(re.RecordHeader) {
+// 					io.WriteString(proxyClient, "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n")
+// 					return
+// 				}
 
-				ctx.Logf("TLS handshake error from %s: %v", proxyClient.RemoteAddr(), err)
-				return
-			}
+// 				ctx.Logf("TLS handshake error from %s: %v", proxyClient.RemoteAddr(), err)
+// 				return
+// 			}
 
-			ctx.Logf("Assuming CONNECT is TLS, TLS proxying it")
-			targetSiteCon, err := connectDial(proxy, "tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
-			if err != nil {
-				httpError(proxyClientTls, ctx, err)
-				if targetSiteCon != nil {
-					targetSiteCon.Close()
-				}
-				return
-			}
+// 			ctx.Logf("Assuming CONNECT is TLS, TLS proxying it")
+// 			targetSiteCon, err := connectDial(proxy, "tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+// 			if err != nil {
+// 				httpError(proxyClientTls, ctx, err)
+// 				if targetSiteCon != nil {
+// 					targetSiteCon.Close()
+// 				}
+// 				return
+// 			}
 
-			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
-			if negotiatedProtocol == "" {
-				negotiatedProtocol = "http/1.1"
-			}
+// 			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
+// 			if negotiatedProtocol == "" {
+// 				negotiatedProtocol = "http/1.1"
+// 			}
 
-			targetTlsConfig := &tls.Config{
-				RootCAs:    tlsConfig.RootCAs,
-				ServerName: "localhost",
-				NextProtos: []string{negotiatedProtocol},
-			}
+// 			targetTlsConfig := &tls.Config{
+// 				RootCAs:    tlsConfig.RootCAs,
+// 				ServerName: "localhost",
+// 				NextProtos: []string{negotiatedProtocol},
+// 			}
 
-			targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
-			if err := targetSiteTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake target %v %v", req.Host, err)
-				httpError(proxyClientTls, ctx, err)
-				targetSiteTls.Close()
-				return
-			}
+// 			targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
+// 			if err := targetSiteTls.Handshake(); err != nil {
+// 				ctx.Warnf("Cannot handshake target %v %v", req.Host, err)
+// 				httpError(proxyClientTls, ctx, err)
+// 				targetSiteTls.Close()
+// 				return
+// 			}
 
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() {
-				if _, err := io.Copy(proxyClientTls, targetSiteTls); err != nil {
-					ctx.Warnf("Error copying to target: %s", err)
-					httpError(proxyClientTls, ctx, err)
-				}
-				proxyClientTls.CloseWrite()
-				wg.Done()
-			}()
-			go func() {
-				if _, err := io.Copy(targetSiteTls, proxyClientTls); err != nil {
-					ctx.Warnf("Error copying to client: %s", err)
-				}
-				targetSiteTls.CloseWrite()
-				wg.Done()
-			}()
-			wg.Wait()
-			proxyClientTls.Close()
-			targetSiteTls.Close()
-		},
-	}
-}
+// 			var wg sync.WaitGroup
+// 			wg.Add(2)
+// 			go func() {
+// 				if _, err := io.Copy(proxyClientTls, targetSiteTls); err != nil {
+// 					ctx.Warnf("Error copying to target: %s", err)
+// 					httpError(proxyClientTls, ctx, err)
+// 				}
+// 				proxyClientTls.CloseWrite()
+// 				wg.Done()
+// 			}()
+// 			go func() {
+// 				if _, err := io.Copy(targetSiteTls, proxyClientTls); err != nil {
+// 					ctx.Warnf("Error copying to client: %s", err)
+// 				}
+// 				targetSiteTls.CloseWrite()
+// 				wg.Done()
+// 			}()
+// 			wg.Wait()
+// 			proxyClientTls.Close()
+// 			targetSiteTls.Close()
+// 		},
+// 	}
+// }
 
 func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	proxy := goproxy.NewProxyHttpServer()
@@ -187,6 +186,10 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		goproxy.RejectConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
 		goproxy.HTTPMitmConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
 	}
+
+
+	fmt.Println(proxyTLSConfig)
+
 	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host == "" {
 			fmt.Fprintln(w, "Cannot handle requests without a Host header, e.g. HTTP 1.0")
@@ -203,116 +206,131 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		}
 		http.Error(w, "Not Found", 404)
 	})
-	cond := proxy.OnRequest(config.tldMatches())
-	cond.HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-		hostName, hostPort, err := net.SplitHostPort(host)
-		if err != nil {
-			// probably because no port in the host (determine it via the scheme)
-			if ctx.Req.URL.Scheme == "https" {
-				hostPort = "443"
-			} else {
-				hostPort = "80"
-			}
-			hostName = ctx.Req.Host
-		}
-		// wrong port?
-		if ctx.Req.URL.Scheme == "https" && hostPort != "443" {
-			return goproxy.MitmConnect, host
-		} else if ctx.Req.URL.Scheme == "http" && hostPort != "80" {
-			return goproxy.MitmConnect, host
-		}
-		projectDir := p.GetDir(hostName)
-		if projectDir == "" {
-			return goproxy.MitmConnect, host
-		}
 
-		pid := pid.New(projectDir, nil)
-		if !pid.IsRunning() {
-			return goproxy.MitmConnect, host
-		}
 
-		// TODO this must be configurable
-		backend := fmt.Sprintf("127.0.0.1:%d", pid.Port)
 
-		if hostPort != "443" {
-			// No TLS termination required, let's go through regular proxy
-			return goproxy.OkConnect, backend
-		}
+	proxy.OnRequest(goproxy.UrlHasPrefix("/httpbin")).Do(
+		goproxy.FuncReqHandler(
+			func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 
-		if proxyTLSConfig != nil {
-			return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
-		}
+				regex := regexp.MustCompile(`^/httpbin`)
+				baseurl := "https://httpbin.org"
+				urlString := regex.ReplaceAllLiteralString(req.URL.Path, baseurl)
 
-		// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
-		return goproxy.RejectConnect, backend
-	})
-	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		hostName, hostPort, err := net.SplitHostPort(r.Host)
-		if err != nil {
-			// probably because no port in the host (determine it via the scheme)
-			if r.URL.Scheme == "https" {
-				hostPort = "443"
-			} else {
-				hostPort = "80"
-			}
-			hostName = r.Host
-		}
-		// wrong port?
-		if r.URL.Scheme == "https" && hostPort != "443" {
-			return r, goproxy.NewResponse(r,
-				goproxy.ContentTypeHtml, http.StatusNotFound,
-				html.WrapHTML(
-					"Proxy Error",
-					html.CreateErrorTerminal(`You must use port 443 for HTTPS requests (%s used)`, hostPort)+
-						html.CreateAction(fmt.Sprintf("https://%s/", hostName), "Go to port 443"), ""),
-			)
-		} else if r.URL.Scheme == "http" && hostPort != "80" {
-			return r, goproxy.NewResponse(r,
-				goproxy.ContentTypeHtml, http.StatusNotFound,
-				html.WrapHTML(
-					"Proxy Error",
-					html.CreateErrorTerminal(`You must use port 80 for HTTP requests (%s used)`, hostPort)+
-						html.CreateAction(fmt.Sprintf("http://%s/", hostName), "Go to port 80"), ""),
-			)
-		}
-		projectDir := p.GetDir(hostName)
-		if projectDir == "" {
-			hostNameWithoutTLD := strings.TrimSuffix(hostName, "."+p.TLD)
-			hostNameWithoutTLD = strings.TrimPrefix(hostNameWithoutTLD, "www.")
+				url, err := url.Parse(urlString)
+				if err != nil {
+					return req, &http.Response{StatusCode: http.StatusInternalServerError}
+				}
+				req.Host = url.Host
+				req.URL = url
+				req.Header.Add("X-Via", "symfony-cli")
+				return req, nil
+			}))
 
-			// the domain does not refer to any project
-			return r, goproxy.NewResponse(r,
-				goproxy.ContentTypeHtml, http.StatusNotFound,
-				html.WrapHTML("Proxy Error", html.CreateErrorTerminal(`# The "%s" hostname is not linked to a directory yet.
-# Link it via the following command:
 
-<code>symfony proxy:domain:attach %s --dir=/some/dir</code>`, hostName, hostNameWithoutTLD), ""))
-		}
+	// cond := proxy.OnRequest(config.tldMatches())
+	// cond.HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+	// 	fmt.Printf("%#v\n", ctx.Req)
+	// 	_, hostPort, err := net.SplitHostPort(host)
+	// 	if err != nil {
+	// 		// probably because no port in the host (determine it via the scheme)
+	// 		if ctx.Req.URL.Scheme == "https" {
+	// 			hostPort = "443"
+	// 		} else {
+	// 			hostPort = "80"
+	// 		}
+	// 		_ = ctx.Req.Host
+	// 	}
+	// 	// wrong port?
+	// 	if ctx.Req.URL.Scheme == "https" && hostPort != "443" {
+	// 		return goproxy.MitmConnect, host
+	// 	} else if ctx.Req.URL.Scheme == "http" && hostPort != "80" {
+	// 		return goproxy.MitmConnect, host
+	// 	}
 
-		pid := pid.New(projectDir, nil)
-		if !pid.IsRunning() {
-			return r, goproxy.NewResponse(r,
-				goproxy.ContentTypeHtml, http.StatusNotFound,
-				// colors from http://ethanschoonover.com/solarized
-				html.WrapHTML(
-					"Proxy Error",
-					html.CreateErrorTerminal(`# It looks like the web server associated with the "%s" hostname is not started yet.
-# Start it via the following command:
+	// 	// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
+	// 	return goproxy.RejectConnect, host
+	// })
 
-$ symfony server:start --daemon --dir=%s`,
-						hostName, projectDir)+
-						html.CreateAction("", "Retry"), ""),
-			)
-		}
+	// cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	// 	hostName, hostPort, err := net.SplitHostPort(r.Host)
+	// 	if err != nil {
+	// 		// probably because no port in the host (determine it via the scheme)
+	// 		if r.URL.Scheme == "https" {
+	// 			hostPort = "443"
+	// 		} else {
+	// 			hostPort = "80"
+	// 		}
+	// 		hostName = r.Host
+	// 	}
+	// 	// wrong port?
+	// 	if r.URL.Scheme == "https" && hostPort != "443" {
+	// 		return r, goproxy.NewResponse(r,
+	// 			goproxy.ContentTypeHtml, http.StatusNotFound,
+	// 			html.WrapHTML(
+	// 				"Proxy Error",
+	// 				html.CreateErrorTerminal(`You must use port 443 for HTTPS requests (%s used)`, hostPort)+
+	// 					html.CreateAction(fmt.Sprintf("https://%s/", hostName), "Go to port 443"), ""),
+	// 		)
+	// 	} else if r.URL.Scheme == "http" && hostPort != "80" {
+	// 		return r, goproxy.NewResponse(r,
+	// 			goproxy.ContentTypeHtml, http.StatusNotFound,
+	// 			html.WrapHTML(
+	// 				"Proxy Error",
+	// 				html.CreateErrorTerminal(`You must use port 80 for HTTP requests (%s used)`, hostPort)+
+	// 					html.CreateAction(fmt.Sprintf("http://%s/", hostName), "Go to port 80"), ""),
+	// 		)
+	// 	}
 
-		r.URL.Host = fmt.Sprintf("127.0.0.1:%d", pid.Port)
+	// 	return r, nil
+	// })
 
-		if r.Header.Get("X-Forwarded-Port") == "" {
-			r.Header.Set("X-Forwarded-Port", hostPort)
-		}
+	// AlwaysAccept := goproxy.ReqConditionFunc(func(_ *http.Request, _ *goproxy.ProxyCtx) bool { return true })
 
-		return r, nil
-	})
+	// proxy.OnRequest(AlwaysAccept).
+	// 	Do(goproxy.FuncReqHandler(
+	// 		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	// 			fmt.Printf("3rd Richard OnRequest %v, %v", req, ctx)
+
+	// 			hostname := req.URL.Hostname()
+	// 			port := req.URL.Port()
+
+	// 			projectDir := p.GetDir(hostname)
+	// 			if projectDir == "" {
+	// 				return req, nil
+	// 			}
+
+	// 			pid := pid.New(projectDir, nil)
+	// 			if !pid.IsRunning() {
+	// 				return req, nil
+	// 			}
+
+	// 			// 	// TODO this must be configurable
+	// 			backend := fmt.Sprintf("127.0.0.1:%d", pid.Port)
+	// 			fmt.Printf("proxy request to %#v\n", backend)
+
+	// 			if port != "443" {
+	// 				// No TLS termination required, let's go through regular proxy
+	// 				req.Host = backend
+	// 				return req, nil
+	// 			}
+
+	// 			// if proxyTLSConfig != nil {
+	// 			// 	return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
+	// 			// }
+	// 			return req, nil
+	// 		}))
+
+	// proxy.OnRequest(func(prefix string) goproxy.ReqConditionFunc {
+	// 	fmt.Printf("richard create proxy for %#v\n", prefix)
+	// 	return func(req *http.Request, ctx *goproxy.ProxyCtx) bool {
+	// 		fmt.Printf("testing %#v, %#v\n", req, prefix)
+	// 		return strings.HasPrefix(req.URL.Path, prefix) ||
+	// 			strings.HasPrefix(req.URL.Host+req.URL.Path, prefix) ||
+	// 			strings.HasPrefix(req.URL.Scheme+req.URL.Host+req.URL.Path, prefix)
+	// 	}
+	// }("/httpbin"))
+
 	return p
 }
 
@@ -322,7 +340,7 @@ func (p *Proxy) Start() error {
 }
 
 func (p *Proxy) servePacFile(w http.ResponseWriter, r *http.Request) {
-	// Use the current request hostname (r.Host) to generate the PAC file.
+	// Use the current request n (r.Host) to generate the PAC file.
 	// This means that as soon as you are able to reach the proxy, the generated
 	// PAC file will expose an appropriate hostname or IP even if the proxy
 	// is running remotely, in a container or a VM.
