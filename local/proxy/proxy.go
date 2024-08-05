@@ -207,14 +207,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	})
 
 	// TODO currently the proxy is not recreated when the config changes
-	backends := BackendConfigList{BackendConfig{
-			Basepath: "/httpbin",
-			BackendBaseUrl: "https://httpbin.org",
-
-	}}
-
-	for _, b := range backends {
-	// for _, b := range config.backends {
+	for _, b := range config.backends {
 		fmt.Printf("\n\nset up proxy handler for %v\n\n", b)
 		var prefix string
 		if (b.Domain == "") || (b.Domain == "*") {
