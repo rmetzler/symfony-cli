@@ -225,31 +225,6 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		ctx.Warnf("req.URL.Path: %#v\n", req.URL.Path)
 		ctx.Warnf("req.URL.RawPath: %#v\n", req.URL.RawPath)
 
-		for _, bc := range config.backends {
-			prefix := bc.Prefix()
-			ctx.Warnf("prefix: %s", prefix)
-
-			if strings.HasPrefix(req.URL.Path, prefix) ||
-				strings.HasPrefix(req.URL.Host+req.URL.Path, prefix) {
-
-				ctx.Warnf("prefix matches")
-
-				// TODO create regex only once in backendconfig
-				regex := regexp.MustCompile(`^` + bc.Basepath)
-				urlString := regex.ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
-				url, err := url.Parse(urlString)
-				if err != nil {
-					// something went wrong and urlString is not a valid url
-					return goproxy.RejectConnect, urlString
-				}
-				req.Host = url.Host
-				req.URL = url
-				req.Header.Add("X-Via", "symfony-cli")
-				return goproxy.MitmConnect, url.Host
-			} else {
-				ctx.Warnf("prefix didn't match")
-			}
-		}
 
 		projectDir := p.GetDir(hostName)
 		if projectDir == "" {
@@ -269,7 +244,8 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		}
 
 		if proxyTLSConfig != nil {
-			return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
+			return goproxy.HTTPMitmConnect, backend
+			// return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
 		}
 
 		// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
@@ -278,10 +254,10 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 
 		req := ctx.Req
-		ctx.Warnf("Request: %#v\n", req)
-		ctx.Warnf("RequestURI: %#v\n", req.RequestURI)
-		ctx.Warnf("req.URL.Path: %#v\n", req.URL.Path)
-		ctx.Warnf("req.URL.RawPath: %#v\n", req.URL.RawPath)
+		ctx.Warnf("DoFunc Request: %#v\n", req)
+		ctx.Warnf("DoFunc RequestURI: %#v\n", req.RequestURI)
+		ctx.Warnf("DoFunc req.URL.Path: %#v\n", req.URL.Path)
+		ctx.Warnf("DoFunc req.URL.RawPath: %#v\n", req.URL.RawPath)
 
 		for _, bc := range config.backends {
 			prefix := bc.Prefix()
@@ -290,7 +266,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 			if strings.HasPrefix(req.URL.Path, prefix) ||
 				strings.HasPrefix(req.URL.Host+req.URL.Path, prefix) {
 
-				ctx.Warnf("prefix matches")
+				ctx.Warnf("DoFunc prefix matches")
 
 				// TODO create regex only once in backendconfig
 				regex := regexp.MustCompile(`^` + bc.Basepath)
@@ -305,7 +281,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 				req.Header.Add("X-Via", "symfony-cli")
 				return req, nil
 			} else {
-				ctx.Warnf("prefix didn't match")
+				ctx.Warnf("DoFunc prefix didn't match")
 			}
 		}
 
