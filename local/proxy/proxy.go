@@ -47,8 +47,14 @@ type Proxy struct {
 	proxy *goproxy.ProxyHttpServer
 }
 
+func close(c io.Closer) {
+	if c != nil {
+		c.Close()
+	}
+}
+
 func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, localPort int) *goproxy.ConnectAction {
-	httpError := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
+	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
 		}
@@ -69,6 +75,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 	// looks like it might've been a misdirected plaintext HTTP request.
 	tlsRecordHeaderLooksLikeHTTP := func(hdr [5]byte) bool {
 		switch string(hdr[:]) {
+		// YES this looks wrong. It's actually called OPTIONS,
+		// but the original dev just used the very first FIVE bytes of the HTTP header
+		// and the reason is that there are only 5 bytes in the tls.RecordHeaderError.RecordHeader
 		case "GET /", "HEAD ", "POST ", "PUT /", "OPTIO":
 			return true
 		}
@@ -77,13 +86,15 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 	return &goproxy.ConnectAction{
 		Action: goproxy.ConnectHijack,
 		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
-			ctx.Logf("Hijacking CONNECT")
+			ctx.Warnf("Hijacking CONNECT")
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 			proxyClientTls := tls.Server(proxyClient, tlsConfig)
+			defer close(proxyClient)
+
 			if err := proxyClientTls.Handshake(); err != nil {
-				defer proxyClient.Close()
-				if re, ok := err.(tls.RecordHeaderError); ok && re.Conn != nil && tlsRecordHeaderLooksLikeHTTP(re.RecordHeader) {
+				rhErr, ok := err.(tls.RecordHeaderError)
+				if ok && rhErr.Conn != nil && tlsRecordHeaderLooksLikeHTTP(rhErr.RecordHeader) {
 					io.WriteString(proxyClient, "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n")
 					return
 				}
@@ -92,13 +103,15 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				return
 			}
 
-			ctx.Logf("Assuming CONNECT is TLS, TLS proxying it")
+			ctx.Warnf("Assuming CONNECT is TLS, TLS proxying it")
+			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
+			// TODO we need to implement a proxy on OSI layer 7,
+			// so we can read the URI and proxy to the correct backend
 			targetSiteCon, err := connectDial(proxy, "tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+			defer close(targetSiteCon)
+
 			if err != nil {
-				httpError(proxyClientTls, ctx, err)
-				if targetSiteCon != nil {
-					targetSiteCon.Close()
-				}
+				badGatewayResponse(proxyClientTls, ctx, err)
 				return
 			}
 
@@ -114,10 +127,11 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			}
 
 			targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
+			defer close(targetSiteTls)
+
 			if err := targetSiteTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake target %v %v", req.Host, err)
-				httpError(proxyClientTls, ctx, err)
-				targetSiteTls.Close()
+				badGatewayResponse(proxyClientTls, ctx, err)
 				return
 			}
 
@@ -126,7 +140,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			go func() {
 				if _, err := io.Copy(proxyClientTls, targetSiteTls); err != nil {
 					ctx.Warnf("Error copying to target: %s", err)
-					httpError(proxyClientTls, ctx, err)
+					badGatewayResponse(proxyClientTls, ctx, err)
 				}
 				proxyClientTls.CloseWrite()
 				wg.Done()
@@ -139,8 +153,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				wg.Done()
 			}()
 			wg.Wait()
-			proxyClientTls.Close()
-			targetSiteTls.Close()
 		},
 	}
 }
@@ -225,7 +237,6 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		ctx.Warnf("req.URL.Path: %#v\n", req.URL.Path)
 		ctx.Warnf("req.URL.RawPath: %#v\n", req.URL.RawPath)
 
-
 		projectDir := p.GetDir(hostName)
 		if projectDir == "" {
 			return goproxy.MitmConnect, host
@@ -244,8 +255,8 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		}
 
 		if proxyTLSConfig != nil {
-			return goproxy.HTTPMitmConnect, backend
-			// return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
+			// return goproxy.HTTPMitmConnect, backend
+			return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
 		}
 
 		// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
