@@ -132,8 +132,8 @@ var localProxyStartCmd = &console.Command{
 		if !c.Bool("foreground") && reexec.IsChild() {
 			logger = zerolog.New(lw).With().Timestamp().Logger()
 		}
-
-		proxy := proxy.New(config, ca, log.New(logger, "", 0), terminal.IsDebug())
+		fmt.Println("not used", logger)
+		proxy := proxy.New(config, ca, log.Default(), terminal.IsDebug())
 		errChan := make(chan error)
 		go func() {
 			errChan <- proxy.Start()
