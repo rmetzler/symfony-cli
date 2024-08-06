@@ -60,11 +60,12 @@ var localProxyAttachBackendCmd = &console.Command{
 			return err
 		}
 
-		config.Append(proxy.BackendConfig{
-			Domain:         "*", // c.String("domains"),
-			BackendBaseUrl: c.String("backend"),
-			Basepath:       c.String("basepath"),
-		})
+		config.AppendBackendConfig(
+			proxy.BackendConfig{
+				Domain:         "*", // c.String("domains"),
+				BackendBaseUrl: c.String("backend"),
+				Basepath:       c.String("basepath"),
+			})
 
 		terminal.Println("<info>The proxy is now configured with the following domains for this directory:</>")
 

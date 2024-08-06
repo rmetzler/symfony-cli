@@ -207,23 +207,17 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	})
 
 	// TODO currently the proxy is not recreated when the config changes
-	for _, b := range config.backends {
-		fmt.Printf("\n\nset up proxy handler for %v\n\n", b)
-		var prefix string
-		if (b.Domain == "") || (b.Domain == "*") {
-			prefix = b.Basepath
-		} else {
-			tld := ".wip"
-			prefix = b.Domain + tld + b.Basepath
-		}
-		fmt.Println("prefix =", prefix)
+	for _, bc := range config.backends {
+		log.Default().Printf("\n\nset up proxy handler for %v\n\n", bc)
+		prefix := bc.Prefix()
+		log.Default().Println("prefix =", prefix)
 
 		proxy.OnRequest(goproxy.UrlHasPrefix(prefix)).Do(
 			goproxy.FuncReqHandler(
 				func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 
-					regex := regexp.MustCompile(`^` + b.Basepath)
-					urlString := regex.ReplaceAllLiteralString(req.URL.Path, b.BackendBaseUrl)
+					regex := regexp.MustCompile(`^` + bc.Basepath)
+					urlString := regex.ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
 
 					url, err := url.Parse(urlString)
 					if err != nil {
@@ -238,7 +232,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 
 	// cond := proxy.OnRequest(config.tldMatches())
 	// cond.HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-	// 	fmt.Printf("%#v\n", ctx.Req)
+	// 	log.Default().Printf("%#v\n", ctx.Req)
 	// 	_, hostPort, err := net.SplitHostPort(host)
 	// 	if err != nil {
 	// 		// probably because no port in the host (determine it via the scheme)
@@ -298,7 +292,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	// proxy.OnRequest(AlwaysAccept).
 	// 	Do(goproxy.FuncReqHandler(
 	// 		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	// 			fmt.Printf("3rd Richard OnRequest %v, %v", req, ctx)
+	// 			log.Default().Printf("3rd Richard OnRequest %v, %v", req, ctx)
 
 	// 			hostname := req.URL.Hostname()
 	// 			port := req.URL.Port()
@@ -315,7 +309,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 
 	// 			// 	// TODO this must be configurable
 	// 			backend := fmt.Sprintf("127.0.0.1:%d", pid.Port)
-	// 			fmt.Printf("proxy request to %#v\n", backend)
+	// 			logger.Printf("proxy request to %#v\n", backend)
 
 	// 			if port != "443" {
 	// 				// No TLS termination required, let's go through regular proxy
@@ -330,9 +324,9 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	// 		}))
 
 	// proxy.OnRequest(func(prefix string) goproxy.ReqConditionFunc {
-	// 	fmt.Printf("richard create proxy for %#v\n", prefix)
+	// 	logger.Printf("richard create proxy for %#v\n", prefix)
 	// 	return func(req *http.Request, ctx *goproxy.ProxyCtx) bool {
-	// 		fmt.Printf("testing %#v, %#v\n", req, prefix)
+	// 		logger.Printf("testing %#v, %#v\n", req, prefix)
 	// 		return strings.HasPrefix(req.URL.Path, prefix) ||
 	// 			strings.HasPrefix(req.URL.Host+req.URL.Path, prefix) ||
 	// 			strings.HasPrefix(req.URL.Scheme+req.URL.Host+req.URL.Path, prefix)
@@ -411,5 +405,18 @@ func (p *Proxy) serveIndex(w http.ResponseWriter, _ *http.Request) {
 			content += "<br>"
 		}
 	}
+	content += "</table>"
+
+	content += "<table><tr><th>Domain</th><th>Basepath</th><th>BackendBaseURL</th></tr>"
+	for _, bc := range p.backends {
+		content += "<tr>"
+		content += fmt.Sprintf("<td>%s</td>", bc.Domain)
+		content += fmt.Sprintf("<td>%s</td>", bc.Basepath)
+
+		content += fmt.Sprintf(`<td><a href="%s">%s</a></td>`, bc.BackendBaseUrl, bc.BackendBaseUrl)
+		content += "</tr>"
+	}
+	content += "</table>"
+
 	w.Write([]byte(html.WrapHTML("Proxy Index", html.CreateTerminal(content), "")))
 }

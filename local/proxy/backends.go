@@ -4,18 +4,29 @@ import "fmt"
 
 type BackendConfigList []BackendConfig
 
-// type BackendConfigList struct {
-// 	Default BackendConfig
-// 	backendConfigList []BackendConfig
-// }
+//	type BackendConfigList struct {
+//		Default BackendConfig
+//		backendConfigList []BackendConfig
+//	}
 type BackendConfig struct {
 	Domain         string `json:"domain"   yaml:"domain"`
 	Basepath       string `json:"basepath" yaml:"basepath"`
 	BackendBaseUrl string `json:"backend"  yaml:"backend"`
 }
 
+func (bc BackendConfig) Prefix() string {
+	var prefix string
+	if (bc.Domain == "") || (bc.Domain == "*") {
+		prefix = bc.Basepath
+	} else {
+		// TODO we need the TLD from somewhere else
+		tld := ".wip"
+		prefix = bc.Domain + tld + bc.Basepath
+	}
+	return prefix
+}
 
-func (c *Config) Append(conf BackendConfig)  {
+func (c *Config) AppendBackendConfig(conf BackendConfig) {
 	fmt.Printf("append %#v %#v\n", c.backends, conf)
 	c.backends = append(c.backends, conf)
 	fmt.Printf("append %#v %#v\n", c.backends, conf)
