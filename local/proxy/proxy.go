@@ -53,7 +53,7 @@ func close(c io.Closer) {
 	}
 }
 
-func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, localPort int) *goproxy.ConnectAction {
+func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, backend string) *goproxy.ConnectAction {
 	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
@@ -107,7 +107,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
 			// TODO we need to implement a proxy on OSI layer 7,
 			// so we can read the URI and proxy to the correct backend
-			targetSiteCon, err := connectDial(proxy, "tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+			targetSiteCon, err := connectDial(proxy, "tcp", backend)
 			defer close(targetSiteCon)
 
 			if err != nil {
@@ -156,6 +156,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 		},
 	}
 }
+
 
 func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	proxy := goproxy.NewProxyHttpServer()
@@ -212,6 +213,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		http.Error(w, "Not Found", 404)
 	})
 
+	// proxy only where the TLD matches
 	cond := proxy.OnRequest(config.tldMatches())
 	cond.HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
 		hostName, hostPort, err := net.SplitHostPort(host)
@@ -224,7 +226,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 			}
 			hostName = ctx.Req.Host
 		}
-		// wrong port?
+		// wrong port for scheme?
 		if ctx.Req.URL.Scheme == "https" && hostPort != "443" {
 			return goproxy.MitmConnect, host
 		} else if ctx.Req.URL.Scheme == "http" && hostPort != "80" {
@@ -255,15 +257,16 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		}
 
 		if proxyTLSConfig != nil {
-			// return goproxy.HTTPMitmConnect, backend
-			return tlsToLocalWebServer(proxy, proxyTLSConfig, pid.Port), backend
+			// the request came via HTTPS
+			// return goproxy.OkConnect, backend
+			return tlsToLocalWebServer(proxy, proxyTLSConfig, backend), backend
 		}
 
 		// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
 		return goproxy.RejectConnect, backend
 	})
-	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 
+	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		req := ctx.Req
 		ctx.Warnf("DoFunc Request: %#v\n", req)
 		ctx.Warnf("DoFunc RequestURI: %#v\n", req.RequestURI)
