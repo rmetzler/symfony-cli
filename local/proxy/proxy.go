@@ -56,11 +56,12 @@ func close(c io.Closer) {
 
 func orPanic(err error) {
 	if err != nil {
+		fmt.Println("lets panic", err)
 		panic(err)
 	}
 }
 
-func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, backend string) *goproxy.ConnectAction {
+func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
 	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
@@ -112,17 +113,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			ctx.Warnf("Assuming CONNECT is TLS, TLS proxying it")
 
-			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
-			// TODO we need to implement a proxy on OSI layer 7,
-			// so we can read the URI and proxy to the correct backend
-			targetSiteCon, err := connectDial(proxy, "tcp", backend)
-			defer close(targetSiteCon)
-
-			if err != nil {
-				badGatewayResponse(proxyClientTls, ctx, err)
-				return
-			}
-
 			ctx.Warnf("Hijack Request: %#v\n", req)
 			ctx.Warnf("Hijack RequestURI: %#v\n", req.RequestURI)
 			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
@@ -132,6 +122,59 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			myReq, err := http.ReadRequest(clientBuf.Reader)
 			orPanic(err)
+
+			actualBackend := backend
+
+			for _, bc := range config.backends {
+				prefix := bc.Prefix()
+				ctx.Warnf("prefix: %s", prefix)
+
+				if strings.HasPrefix(myReq.URL.Path, prefix) ||
+					strings.HasPrefix(myReq.URL.Host+myReq.URL.Path, prefix) {
+
+					ctx.Warnf("DoFunc prefix matches")
+
+					// TODO create regex only once in backendconfig
+					regex := regexp.MustCompile(`^` + bc.Basepath)
+					ctx.Warnf("myReq.URL.Path: %#v\n", myReq.URL.Path)
+					urlString := regex.ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
+					ctx.Warnf("urlstring: %#v\n", urlString)
+
+					url, _ := url.Parse(urlString)
+					// if err != nil {
+					// 	// something went wrong and urlString is not a valid url
+					// 	return myReq, &http.Response{StatusCode: http.StatusInternalServerError}
+					// }
+					myReq.Host = url.Host
+					myReq.URL = url
+					myReq.RequestURI = ""
+					myReq.Header.Add("X-Via", "symfony-cli")
+
+					actualBackend = myReq.Host
+					actualBackend = "44.198.106.96:443"
+				} else {
+					ctx.Warnf("DoFunc prefix didn't match")
+				}
+			}
+
+			ctx.Warnf("actualBackend: %#v\n", actualBackend)
+			ctx.Warnf("Hijack myReq: %#v\n", myReq)
+			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
+			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
+			ctx.Warnf("Hijack myReq.URL: %#v\n", myReq.URL)
+			ctx.Warnf("Hijack myReq.URL.RawPath: %#v\n", myReq.URL.RawPath)
+
+			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
+			// TODO we need to implement a proxy on OSI layer 7,
+			// so we can read the URI and proxy to the correct backend
+			targetSiteCon, err := connectDial(proxy, "tcp", actualBackend)
+			defer close(targetSiteCon)
+
+			if err != nil {
+				ctx.Warnf(`Error for connectDial(proxy, "tcp", actualBackend) = %#v\n`, err)
+				badGatewayResponse(proxyClientTls, ctx, err)
+				return
+			}
 
 			// breader := bufio.NewReader(proxyClientTls)
 
@@ -143,20 +186,16 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			// breader.Reset(proxyClientTls)
 
-			ctx.Warnf("Hijack myReq: %#v\n", myReq)
-			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
-			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
-			ctx.Warnf("Hijack myReq.URL.Path: %#v\n", myReq.URL.Path)
-			ctx.Warnf("Hijack myReq.URL.RawPath: %#v\n", myReq.URL.RawPath)
-
 			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
 			if negotiatedProtocol == "" {
 				negotiatedProtocol = "http/1.1"
 			}
 
 			targetTlsConfig := &tls.Config{
-				RootCAs:    tlsConfig.RootCAs,
-				ServerName: "localhost",
+				// RootCAs:    tlsConfig.RootCAs,
+				RootCAs:    nil,
+				// ServerName: "localhost",
+				ServerName: "httpbin.org",
 				NextProtos: []string{negotiatedProtocol},
 			}
 
@@ -164,7 +203,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			defer close(targetSiteTls)
 
 			if err := targetSiteTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake target %v %v", req.Host, err)
+				ctx.Warnf("Cannot handshake target %v %v", myReq.Host, err)
 				badGatewayResponse(proxyClientTls, ctx, err)
 				return
 			}
@@ -312,7 +351,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		if proxyTLSConfig != nil {
 			// the request came via HTTPS
 			// return goproxy.OkConnect, backend
-			return tlsToLocalWebServer(proxy, proxyTLSConfig, backend), backend
+			return tlsToLocalWebServer(proxy, proxyTLSConfig, p.Config, backend), backend
 		}
 
 		// We didn't manage to get a tls.Config, we can't fulfill this request hijacking TLS
