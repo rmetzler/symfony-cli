@@ -20,6 +20,7 @@
 package proxy
 
 import (
+	"bufio"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -50,6 +51,12 @@ type Proxy struct {
 func close(c io.Closer) {
 	if c != nil {
 		c.Close()
+	}
+}
+
+func orPanic(err error) {
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -104,6 +111,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			}
 
 			ctx.Warnf("Assuming CONNECT is TLS, TLS proxying it")
+
 			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
 			// TODO we need to implement a proxy on OSI layer 7,
 			// so we can read the URI and proxy to the correct backend
@@ -114,6 +122,32 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				badGatewayResponse(proxyClientTls, ctx, err)
 				return
 			}
+
+			ctx.Warnf("Hijack Request: %#v\n", req)
+			ctx.Warnf("Hijack RequestURI: %#v\n", req.RequestURI)
+			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
+			ctx.Warnf("Hijack req.URL.RawPath: %#v\n", req.URL.RawPath)
+
+			clientBuf := bufio.NewReadWriter(bufio.NewReader(proxyClientTls), bufio.NewWriter(proxyClientTls))
+
+			myReq, err := http.ReadRequest(clientBuf.Reader)
+			orPanic(err)
+
+			// breader := bufio.NewReader(proxyClientTls)
+
+			// b, _ := breader.Peek(512)
+			// myReq, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(b)))
+			// if err != nil {
+			// 	ctx.Warnf("%v", err)
+			// }
+
+			// breader.Reset(proxyClientTls)
+
+			ctx.Warnf("Hijack myReq: %#v\n", myReq)
+			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
+			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
+			ctx.Warnf("Hijack myReq.URL.Path: %#v\n", myReq.URL.Path)
+			ctx.Warnf("Hijack myReq.URL.RawPath: %#v\n", myReq.URL.RawPath)
 
 			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
 			if negotiatedProtocol == "" {
@@ -135,20 +169,40 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				return
 			}
 
+			remoteBuf := bufio.NewReadWriter(bufio.NewReader(targetSiteTls), bufio.NewWriter(targetSiteTls))
+
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
-				if _, err := io.Copy(proxyClientTls, targetSiteTls); err != nil {
-					ctx.Warnf("Error copying to target: %s", err)
-					badGatewayResponse(proxyClientTls, ctx, err)
-				}
+				// proxy from backend to client
+				// prefixReader := prefixer.New(os.Stdout, "< ")
+
+				resp, err := http.ReadResponse(remoteBuf.Reader, myReq)
+				orPanic(err)
+				orPanic(resp.Write(clientBuf.Writer))
+				orPanic(clientBuf.Flush())
+
+				// tReader := io.TeeReader(targetSiteTls, os.Stdout)
+				// if _, err := io.Copy(proxyClientTls, tReader); err != nil {
+				// 	ctx.Warnf("Error copying to target: %s", err)
+				// 	badGatewayResponse(proxyClientTls, ctx, err)
+				// }
+
+				ctx.Warnf("proxyClientTls.CloseWrite()")
 				proxyClientTls.CloseWrite()
 				wg.Done()
 			}()
 			go func() {
-				if _, err := io.Copy(targetSiteTls, proxyClientTls); err != nil {
-					ctx.Warnf("Error copying to client: %s", err)
-				}
+				// proxy from client to backend
+				orPanic(myReq.Write(remoteBuf))
+				orPanic(remoteBuf.Flush())
+
+				// tReader := io.TeeReader(proxyClientTls, os.Stdout)
+				// if _, err := io.Copy(targetSiteTls, tReader); err != nil {
+				// 	ctx.Warnf("Error copying to client: %s", err)
+				// }
+
+				ctx.Warnf("targetSiteTls.CloseWrite()")
 				targetSiteTls.CloseWrite()
 				wg.Done()
 			}()
@@ -156,7 +210,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 		},
 	}
 }
-
 
 func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	proxy := goproxy.NewProxyHttpServer()
