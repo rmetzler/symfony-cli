@@ -151,7 +151,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					myReq.Header.Add("X-Via", "symfony-cli")
 
 					actualBackend = myReq.Host
-					actualBackend = "44.198.106.96:443"
+					actualBackend = "34.194.112.169:443"
 				} else {
 					ctx.Warnf("DoFunc prefix didn't match")
 				}
@@ -193,7 +193,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			targetTlsConfig := &tls.Config{
 				// RootCAs:    tlsConfig.RootCAs,
-				RootCAs:    nil,
+				RootCAs: nil,
 				// ServerName: "localhost",
 				ServerName: "httpbin.org",
 				NextProtos: []string{negotiatedProtocol},
@@ -213,12 +213,26 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
+				// proxy from client to backend
+				orPanic(myReq.Write(remoteBuf))
+				orPanic(remoteBuf.Flush())
+				orPanic(myReq.Body.Close())
+
+				// tReader := io.TeeReader(proxyClientTls, os.Stdout)
+				// if _, err := io.Copy(targetSiteTls, tReader); err != nil {
+				// 	ctx.Warnf("Error copying to client: %s", err)
+				// }
+
+				wg.Done()
+			}()
+			go func() {
 				// proxy from backend to client
 				// prefixReader := prefixer.New(os.Stdout, "< ")
 
 				resp, err := http.ReadResponse(remoteBuf.Reader, myReq)
 				orPanic(err)
 				orPanic(resp.Write(clientBuf.Writer))
+				orPanic(resp.Body.Close())
 				orPanic(clientBuf.Flush())
 
 				// tReader := io.TeeReader(targetSiteTls, os.Stdout)
@@ -227,22 +241,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				// 	badGatewayResponse(proxyClientTls, ctx, err)
 				// }
 
-				ctx.Warnf("proxyClientTls.CloseWrite()")
-				proxyClientTls.CloseWrite()
-				wg.Done()
-			}()
-			go func() {
-				// proxy from client to backend
-				orPanic(myReq.Write(remoteBuf))
-				orPanic(remoteBuf.Flush())
-
-				// tReader := io.TeeReader(proxyClientTls, os.Stdout)
-				// if _, err := io.Copy(targetSiteTls, tReader); err != nil {
-				// 	ctx.Warnf("Error copying to client: %s", err)
-				// }
-
-				ctx.Warnf("targetSiteTls.CloseWrite()")
-				targetSiteTls.CloseWrite()
 				wg.Done()
 			}()
 			wg.Wait()
