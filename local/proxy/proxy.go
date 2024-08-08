@@ -154,7 +154,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					myReq.RequestURI = ""
 					myReq.Header.Add("X-Via", "symfony-cli")
 
-
 					// lookup IP for Host
 					backendIPs, err := net.LookupIP(domain)
 					if err != nil {
@@ -209,21 +208,27 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			// TODO do not use TLS if we don't use HTTPS
 			targetTlsConfig := &tls.Config{
 				// RootCAs:    tlsConfig.RootCAs,
-				RootCAs: rootCAs,
+				RootCAs:    rootCAs,
 				ServerName: domain,
 				NextProtos: []string{negotiatedProtocol},
 			}
 
-			targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
-			defer close(targetSiteTls)
+			// TODO use a non-TLS client for HTTP
+			backendConn := targetSiteCon
 
-			if err := targetSiteTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake target %v %v", myReq.Host, err)
-				badGatewayResponse(proxyClientTls, ctx, err)
-				return
+			if myReq.URL.Scheme == "https" {
+				targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
+				defer close(targetSiteTls)
+
+				if err := targetSiteTls.Handshake(); err != nil {
+					ctx.Warnf("Cannot handshake target %v %v", myReq.Host, err)
+					badGatewayResponse(proxyClientTls, ctx, err)
+					return
+				}
+				backendConn = targetSiteTls
 			}
 
-			remoteBuf := bufio.NewReadWriter(bufio.NewReader(targetSiteTls), bufio.NewWriter(targetSiteTls))
+			remoteBuf := bufio.NewReadWriter(bufio.NewReader(backendConn), bufio.NewWriter(backendConn))
 
 			var wg sync.WaitGroup
 			wg.Add(2)
