@@ -2,7 +2,7 @@
 
 SYMFONY_BIN="./symfony-cli"
 PROXY_JSON="$HOME/.symfony5/proxy.json"
-CURL="curl --proxy localhost:7080"
+CURL="curl --proxy localhost:7080 --http1.1"
 
 which php || /bin/sh -c 'apt update; apt install -y php-fpm'
 

@@ -95,6 +95,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 		Action: goproxy.ConnectHijack,
 		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
 			ctx.Warnf("Hijacking CONNECT")
+			// TODO implement HTTP/2.0 connections
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 			proxyClientTls := tls.Server(proxyClient, tlsConfig)
@@ -123,8 +124,8 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			myReq, err := http.ReadRequest(clientBuf.Reader)
 			orPanic(err)
 
-			actualBackend := backend
-
+			ipAndPort := backend
+			domain := "localhost"
 			for _, bc := range config.backends {
 				prefix := bc.Prefix()
 
@@ -152,18 +153,18 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					myReq.RequestURI = ""
 					myReq.Header.Add("X-Via", "symfony-cli")
 
-					actualBackend = myReq.Host
+					domain = myReq.Host
 
 					// lookup IP for Host
-					backendIPs, err := net.LookupIP(actualBackend)
+					backendIPs, err := net.LookupIP(domain)
 					if err != nil {
-						ctx.Warnf("net.LookupIP(%s): ", actualBackend, err)
+						ctx.Warnf("net.LookupIP(%s): ", domain, err)
 						return
 					}
 					for _, ip := range backendIPs {
 						if ipv4 := ip.To4(); ipv4 != nil {
 							ctx.Warnf("IPv4 for: %s\n", ipv4)
-							actualBackend = fmt.Sprintf("%s:443", ipv4)
+							ipAndPort = fmt.Sprintf("%s:443", ipv4)
 							// break // not sure if we want to use the first or the last IPv4
 						}
 						// TODO build IPv6 path
@@ -174,7 +175,8 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				}
 			}
 
-			ctx.Warnf("actualBackend: %#v\n", actualBackend)
+			ctx.Warnf("domain: %#v\n", domain)
+			ctx.Warnf("ipAndPort: %#v\n", ipAndPort)
 			ctx.Warnf("Hijack myReq: %#v\n", myReq)
 			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
 			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
@@ -184,7 +186,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
 			// TODO we need to implement a proxy on OSI layer 7,
 			// so we can read the URI and proxy to the correct backend
-			targetSiteCon, err := connectDial(proxy, "tcp", actualBackend)
+			targetSiteCon, err := connectDial(proxy, "tcp", ipAndPort)
 			defer close(targetSiteCon)
 
 			if err != nil {
@@ -200,11 +202,14 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			// TODO: for wip domains use the original TLS config,
 			// for everything else use default
+			var rootCAs *x509.CertPool
+			if domain == "localhost" {
+				rootCAs = tlsConfig.RootCAs
+			}
 			targetTlsConfig := &tls.Config{
 				// RootCAs:    tlsConfig.RootCAs,
-				RootCAs: nil,
-				// ServerName: "localhost",
-				ServerName: "httpbin.org",
+				RootCAs: rootCAs,
+				ServerName: domain,
 				NextProtos: []string{negotiatedProtocol},
 			}
 
