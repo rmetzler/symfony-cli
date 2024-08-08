@@ -135,7 +135,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				if strings.HasPrefix(myReq.URL.Path, prefix) ||
 					strings.HasPrefix(myReq.URL.Host+myReq.URL.Path, prefix) {
 
-					ctx.Warnf("DoFunc prefix matches")
+					ctx.Warnf("Hijack prefix matches")
 
 					// TODO create regex only once in backendconfig
 					regex := regexp.MustCompile(`^` + bc.Basepath)
@@ -148,12 +148,12 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					// 	// something went wrong and urlString is not a valid url
 					// 	return myReq, &http.Response{StatusCode: http.StatusInternalServerError}
 					// }
-					myReq.Host = url.Host
+					domain = url.Hostname()
+					myReq.Host = domain
 					myReq.URL = url
 					myReq.RequestURI = ""
 					myReq.Header.Add("X-Via", "symfony-cli")
 
-					domain = myReq.Host
 
 					// lookup IP for Host
 					backendIPs, err := net.LookupIP(domain)
@@ -164,14 +164,14 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					for _, ip := range backendIPs {
 						if ipv4 := ip.To4(); ipv4 != nil {
 							ctx.Warnf("IPv4 for: %s\n", ipv4)
-							ipAndPort = fmt.Sprintf("%s:443", ipv4)
+							ipAndPort = fmt.Sprintf("%s:%s", ipv4, url.Port())
 							// break // not sure if we want to use the first or the last IPv4
 						}
 						// TODO build IPv6 path
 					}
-
+					break // we already found a match
 				} else {
-					ctx.Warnf("DoFunc prefix didn't match")
+					ctx.Warnf("Hijack prefix didn't match")
 				}
 			}
 
@@ -206,6 +206,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			if domain == "localhost" {
 				rootCAs = tlsConfig.RootCAs
 			}
+			// TODO do not use TLS if we don't use HTTPS
 			targetTlsConfig := &tls.Config{
 				// RootCAs:    tlsConfig.RootCAs,
 				RootCAs: rootCAs,
