@@ -53,7 +53,6 @@ type Config struct {
 	backends BackendConfigList
 }
 
-
 var DefaultConfig = []byte(`{
 	"tld": "wip",
 	"host": "localhost",
@@ -185,7 +184,6 @@ func (c *Config) GetDomains(dir string) []string {
 func (c *Config) GetBackends() BackendConfigList {
 	return c.backends
 }
-
 
 func (c *Config) GetReachableDomains(dir string) []string {
 	c.mu.Lock()

@@ -1,6 +1,9 @@
 package proxy
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 type BackendConfigList []BackendConfig
 
@@ -12,6 +15,7 @@ type BackendConfig struct {
 	Domain         string `json:"domain"   yaml:"domain"`
 	Basepath       string `json:"basepath" yaml:"basepath"`
 	BackendBaseUrl string `json:"backend"  yaml:"backend"`
+	regexp         *regexp.Regexp
 }
 
 func (bc BackendConfig) Prefix() string {
@@ -30,4 +34,11 @@ func (c *Config) AppendBackendConfig(conf BackendConfig) {
 	fmt.Printf("append %#v %#v\n", c.backends, conf)
 	c.backends = append(c.backends, conf)
 	fmt.Printf("append %#v %#v\n", c.backends, conf)
+}
+
+func (bc *BackendConfig) Regexp() *regexp.Regexp {
+	if bc.regexp == nil {
+		bc.regexp = regexp.MustCompile(`^` + bc.Basepath)
+	}
+	return bc.regexp
 }

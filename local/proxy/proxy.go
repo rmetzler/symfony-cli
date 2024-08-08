@@ -412,9 +412,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 
 				ctx.Warnf("DoFunc prefix matches")
 
-				// TODO create regex only once in backendconfig
-				regex := regexp.MustCompile(`^` + bc.Basepath)
-				urlString := regex.ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
+				urlString := bc.Regexp().ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
 				url, err := url.Parse(urlString)
 				if err != nil {
 					// something went wrong and urlString is not a valid url
