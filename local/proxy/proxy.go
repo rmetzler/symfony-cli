@@ -90,8 +90,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 	tlsRecordHeaderLooksLikeHTTP := func(hdr [5]byte) bool {
 		switch string(hdr[:]) {
 		// YES this looks wrong. It's actually called OPTIONS,
-		// but the original dev just used the very first FIVE bytes of the HTTP header
-		// and the reason is that there are only 5 bytes in the tls.RecordHeaderError.RecordHeader
+		// but the reason is that there are only 5 bytes in the tls.RecordHeaderError.RecordHeader
 		case "GET /", "HEAD ", "POST ", "PUT /", "OPTIO":
 			return true
 		}
