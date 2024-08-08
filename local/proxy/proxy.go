@@ -70,6 +70,12 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			ctx.Warnf("Error closing client connection: %s", err)
 		}
 	}
+	notImplementedResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
+		if _, err := io.WriteString(w, "HTTP/1.1 501 Not Implemented\r\n\r\n"); err != nil {
+			ctx.Warnf("Error responding to client: %s", err)
+		}
+		// do not close the connection after sending this response, client may downgrade to HTTP/1.1
+	}
 	connectDial := func(proxy *goproxy.ProxyHttpServer, network, addr string) (c net.Conn, err error) {
 		if proxy.ConnectDial != nil {
 			return proxy.ConnectDial(network, addr)
@@ -95,10 +101,13 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 		Action: goproxy.ConnectHijack,
 		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
 			ctx.Warnf("Hijacking CONNECT")
+			ctx.Warnf("HTTP method=%s\n", req.Method)
+
 			// TODO implement HTTP/2.0 connections
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 			proxyClientTls := tls.Server(proxyClient, tlsConfig)
+			clientTlsReader := bufio.NewReader(proxyClientTls)
 			defer close(proxyClient)
 
 			if err := proxyClientTls.Handshake(); err != nil {
@@ -119,7 +128,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
 			ctx.Warnf("Hijack req.URL.RawPath: %#v\n", req.URL.RawPath)
 
-			clientBuf := bufio.NewReadWriter(bufio.NewReader(proxyClientTls), bufio.NewWriter(proxyClientTls))
+			clientBuf := bufio.NewReadWriter(clientTlsReader, bufio.NewWriter(proxyClientTls))
 
 			myReq, err := http.ReadRequest(clientBuf.Reader)
 			orPanic(err)
@@ -181,6 +190,17 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
 			ctx.Warnf("Hijack myReq.URL: %#v\n", myReq.URL)
 			ctx.Warnf("Hijack myReq.URL.RawPath: %#v\n", myReq.URL.RawPath)
+
+			if myReq.Method == "PRI" {
+				ctx.Warnf("This is a PRI request for HTTP/2.0, we don't serve HTTP/2.0 yet")
+				notImplementedResponse(proxyClientTls, ctx, err)
+				_, err := clientTlsReader.Discard(6)
+				if err != nil {
+					ctx.Warnf("Failed to process HTTP2 client preface: %v", err)
+					return
+				}
+				return
+			}
 
 			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
 			// TODO we need to implement a proxy on OSI layer 7,
@@ -296,7 +316,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		proxyTLSConfig = &tls.Config{
 			RootCAs:        certpool,
 			GetCertificate: getCertificate,
-			NextProtos:     []string{"h2", "http/1.1", "http/1.0"},
+			NextProtos:     []string{"http/1.1", "h2", "http/1.0"},
 		}
 		goproxy.MitmConnect.TLSConfig = func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error) {
 			return tlsConfig, nil
