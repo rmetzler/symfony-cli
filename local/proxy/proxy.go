@@ -127,7 +127,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 
 			for _, bc := range config.backends {
 				prefix := bc.Prefix()
-				ctx.Warnf("prefix: %s", prefix)
+
+				ctx.Warnf("try to match prefix: URL Host='%s' URL Path='%s', prefix='%s'",
+					myReq.URL.Host, myReq.URL.Path, prefix)
 
 				if strings.HasPrefix(myReq.URL.Path, prefix) ||
 					strings.HasPrefix(myReq.URL.Host+myReq.URL.Path, prefix) {
@@ -151,7 +153,22 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 					myReq.Header.Add("X-Via", "symfony-cli")
 
 					actualBackend = myReq.Host
-					actualBackend = "34.194.112.169:443"
+
+					// lookup IP for Host
+					backendIPs, err := net.LookupIP(actualBackend)
+					if err != nil {
+						ctx.Warnf("net.LookupIP(%s): ", actualBackend, err)
+						return
+					}
+					for _, ip := range backendIPs {
+						if ipv4 := ip.To4(); ipv4 != nil {
+							ctx.Warnf("IPv4 for: %s\n", ipv4)
+							actualBackend = fmt.Sprintf("%s:443", ipv4)
+							// break // not sure if we want to use the first or the last IPv4
+						}
+						// TODO build IPv6 path
+					}
+
 				} else {
 					ctx.Warnf("DoFunc prefix didn't match")
 				}
@@ -176,21 +193,13 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 				return
 			}
 
-			// breader := bufio.NewReader(proxyClientTls)
-
-			// b, _ := breader.Peek(512)
-			// myReq, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(b)))
-			// if err != nil {
-			// 	ctx.Warnf("%v", err)
-			// }
-
-			// breader.Reset(proxyClientTls)
-
 			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
 			if negotiatedProtocol == "" {
 				negotiatedProtocol = "http/1.1"
 			}
 
+			// TODO: for wip domains use the original TLS config,
+			// for everything else use default
 			targetTlsConfig := &tls.Config{
 				// RootCAs:    tlsConfig.RootCAs,
 				RootCAs: nil,
