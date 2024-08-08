@@ -318,13 +318,14 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 			GetCertificate: getCertificate,
 			NextProtos:     []string{"http/1.1", "h2", "http/1.0"},
 		}
-		goproxy.MitmConnect.TLSConfig = func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error) {
+		tlsConfigFunc := func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error) {
 			return tlsConfig, nil
 		}
 		// They don't use TLSConfig but let's keep them in sync
-		goproxy.OkConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
-		goproxy.RejectConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
-		goproxy.HTTPMitmConnect.TLSConfig = goproxy.MitmConnect.TLSConfig
+		goproxy.MitmConnect.TLSConfig = tlsConfigFunc
+		goproxy.OkConnect.TLSConfig = tlsConfigFunc
+		goproxy.RejectConnect.TLSConfig = tlsConfigFunc
+		goproxy.HTTPMitmConnect.TLSConfig = tlsConfigFunc
 	}
 	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host == "" {
