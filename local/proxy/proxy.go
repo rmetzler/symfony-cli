@@ -61,7 +61,7 @@ func orPanic(err error) {
 	}
 }
 
-func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
+func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
 	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
@@ -106,7 +106,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			// TODO implement HTTP/2.0 connections
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
-			proxyClientTls := tls.Server(proxyClient, tlsConfig)
+			proxyClientTls := tls.Server(proxyClient, proxyClientTlsConfig)
 			clientTlsReader := bufio.NewReader(proxyClientTls)
 			defer close(proxyClient)
 
@@ -223,17 +223,15 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, tlsConfig *tls.Config, 
 			// for everything else use default
 			var rootCAs *x509.CertPool
 			if domain == "localhost" {
-				rootCAs = tlsConfig.RootCAs
+				rootCAs = proxyClientTlsConfig.RootCAs
 			}
-			// TODO do not use TLS if we don't use HTTPS
+
 			targetTlsConfig := &tls.Config{
-				// RootCAs:    tlsConfig.RootCAs,
 				RootCAs:    rootCAs,
 				ServerName: domain,
 				NextProtos: []string{negotiatedProtocol},
 			}
 
-			// TODO use a non-TLS client for HTTP
 			backendConn := targetSiteCon
 
 			if myReq.URL.Scheme == "https" {
