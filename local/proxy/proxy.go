@@ -124,6 +124,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 
 			ctx.Warnf("Hijack Request: %#v\n", req)
 			ctx.Warnf("Hijack RequestURI: %#v\n", req.RequestURI)
+			ctx.Warnf("Hijack req.Host: %#v\n", req.Host)
 			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
 			ctx.Warnf("Hijack req.URL.RawPath: %#v\n", req.URL.RawPath)
 
@@ -140,11 +141,11 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			for _, bc := range config.backends {
 				prefix := bc.Prefix()
 
-				ctx.Warnf("try to match prefix: URL Host='%s' URL Path='%s', prefix='%s'",
-					myReq.URL.Host, myReq.URL.Path, prefix)
+				ctx.Warnf("try to match prefix: myReq.Host='%s', myReq.URL.Path='%s', prefix='%s'",
+					myReq.Host, myReq.URL.Path, prefix)
 
 				if strings.HasPrefix(myReq.URL.Path, prefix) ||
-					strings.HasPrefix(myReq.URL.Host+myReq.URL.Path, prefix) {
+					strings.HasPrefix(myReq.Host+myReq.URL.Path, prefix) {
 
 					ctx.Warnf("Hijack prefix matches")
 
