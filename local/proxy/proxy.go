@@ -106,7 +106,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 			proxyClientTls := tls.Server(proxyClient, proxyClientTlsConfig)
-			clientTlsReader := bufio.NewReader(proxyClientTls)
 			defer close(proxyClient)
 
 			if err := proxyClientTls.Handshake(); err != nil {
@@ -128,8 +127,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
 			ctx.Warnf("Hijack req.URL.RawPath: %#v\n", req.URL.RawPath)
 
-			clientBuf := bufio.NewReadWriter(clientTlsReader, bufio.NewWriter(proxyClientTls))
-
+			clientTlsReader := bufio.NewReader(proxyClientTls)
+			clientTlsWriter := bufio.NewWriter(proxyClientTls)
+			clientBuf := bufio.NewReadWriter(clientTlsReader, clientTlsWriter)
 			myReq, err := http.ReadRequest(clientBuf.Reader)
 			orPanic(err)
 
