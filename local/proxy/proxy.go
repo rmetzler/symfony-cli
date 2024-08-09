@@ -133,7 +133,10 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			orPanic(err)
 
 			ipAndPort := backend
+
+			myReq.URL.Scheme = "https" // every request here has https
 			domain := "localhost"
+
 			for _, bc := range config.backends {
 				prefix := bc.Prefix()
 
@@ -184,6 +187,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 
 			ctx.Warnf("domain: %#v\n", domain)
 			ctx.Warnf("ipAndPort: %#v\n", ipAndPort)
+			ctx.Warnf("schema: %#v\n", myReq.URL.Scheme)
 			ctx.Warnf("Hijack myReq: %#v\n", myReq)
 			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
 			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
