@@ -54,12 +54,13 @@ func close(c io.Closer) {
 	}
 }
 
-func orPanic(err error) {
-	if err != nil {
-		fmt.Println("lets panic", err)
-		panic(err)
-	}
-}
+// only use this for prototyping
+// func orPanic(err error) {
+// 	if err != nil {
+// 		fmt.Println("lets panic", err)
+// 		panic(err)
+// 	}
+// }
 
 func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
 	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
@@ -131,7 +132,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			clientTlsWriter := bufio.NewWriter(proxyClientTls)
 			clientBuf := bufio.NewReadWriter(clientTlsReader, clientTlsWriter)
 			myReq, err := http.ReadRequest(clientBuf.Reader)
-			orPanic(err)
+			if err != nil {
+				ctx.Warnf("Problem reading from clientBuf.Reader %#v: %v\n", clientBuf.Reader, err)
+			}
 
 			ipAndPort := backend
 
@@ -256,9 +259,18 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			wg.Add(2)
 			go func() {
 				// proxy from client to backend
-				orPanic(myReq.Write(remoteBuf))
-				orPanic(remoteBuf.Flush())
-				orPanic(myReq.Body.Close())
+				err := myReq.Write(remoteBuf)
+				if err != nil {
+					ctx.Warnf("Error when calling myReq.Write(remoteBuf), myReq=%#v, remoteBuf=%#v: %v\n", myReq, remoteBuf, err)
+				}
+				err = remoteBuf.Flush()
+				if err != nil {
+					ctx.Warnf("Error when calling remoteBuf.Flush(), remoteBuf=%#v: %v\n", remoteBuf, err)
+				}
+				err = myReq.Body.Close()
+				if err != nil {
+					ctx.Warnf("Error with myReq.Body.Close(), myReq.Body=%#v: %v\n", myReq.Body, err)
+				}
 
 				// tReader := io.TeeReader(proxyClientTls, os.Stdout)
 				// if _, err := io.Copy(targetSiteTls, tReader); err != nil {
@@ -272,10 +284,24 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				// prefixReader := prefixer.New(os.Stdout, "< ")
 
 				resp, err := http.ReadResponse(remoteBuf.Reader, myReq)
-				orPanic(err)
-				orPanic(resp.Write(clientBuf.Writer))
-				orPanic(resp.Body.Close())
-				orPanic(clientBuf.Flush())
+				if err != nil {
+					ctx.Warnf("Problem with http.ReadResponse, remoteBuf.Reader=%#v: %v\n", remoteBuf.Reader, err)
+				}
+
+				err = resp.Write(clientBuf.Writer)
+				if err != nil {
+					ctx.Warnf("Problem with resp.Write, clientBuf.Writer=%#v: %v\n", clientBuf.Writer, err)
+				}
+
+				err = resp.Body.Close()
+				if err != nil {
+					ctx.Warnf("Problem with resp.Body.Close(), resp.Body=%#v: %v\n", resp.Body, err)
+				}
+
+				err = clientBuf.Flush()
+				if err != nil {
+					ctx.Warnf("Problem with clientBuf.Flush(), clientBuf=%#v: %v\n", clientBuf, err)
+				}
 
 				// tReader := io.TeeReader(targetSiteTls, os.Stdout)
 				// if _, err := io.Copy(proxyClientTls, tReader); err != nil {
