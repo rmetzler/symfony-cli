@@ -48,6 +48,20 @@ type Proxy struct {
 	proxy *goproxy.ProxyHttpServer
 }
 
+type ProxyRequest struct {
+	backendHost string
+	ipAndPort   string
+	*http.Request
+}
+
+func NewProxyRequest(backendHost string, ipAndPort string, reader *bufio.Reader) (*ProxyRequest, error) {
+	req, err := http.ReadRequest(reader)
+	if err != nil {
+		return nil, err
+	}
+	return &ProxyRequest{backendHost, ipAndPort, req}, nil
+}
+
 func close(c io.Closer) {
 	if c != nil {
 		c.Close()
@@ -62,15 +76,100 @@ func close(c io.Closer) {
 // 	}
 // }
 
-func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
-	badGatewayResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
-		if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
-			ctx.Warnf("Error responding to client: %s", err)
-		}
-		if err := w.Close(); err != nil {
-			ctx.Warnf("Error closing client connection: %s", err)
-		}
+func requestShouldGoToBackend(req *http.Request, bc BackendConfig) bool {
+	return strings.HasPrefix(req.URL.Path, bc.Prefix()) ||
+		strings.HasPrefix(req.Host+req.URL.Path, bc.Prefix())
+}
+
+func printProxyReq(prefix string, req *ProxyRequest, ctx *goproxy.ProxyCtx) {
+	ctx.Warnf("%s req: %#v\n", prefix, req)
+	ctx.Warnf("%s req: %#v\n", prefix, req.Request)
+	ctx.Warnf("%s req.Schema: %#v\n", prefix, req.URL.Scheme)
+	ctx.Warnf("%s req.Method: %#v\n", prefix, req.Method)
+	ctx.Warnf("%s req.RequestURI: %#v\n", prefix, req.RequestURI)
+	ctx.Warnf("%s req.URL: %#v\n", prefix, req.URL)
+	ctx.Warnf("%s req.URL.RawPath: %#v\n", prefix, req.URL.RawPath)
+}
+
+func printReq(prefix string, req *http.Request, ctx *goproxy.ProxyCtx) {
+	printProxyReq(prefix, &ProxyRequest{"", "", req}, ctx)
+}
+
+func getIpForDomain(domain string, ctx *goproxy.ProxyCtx) (net.IP, error) {
+	backendIPs, err := net.LookupIP(domain)
+	if err != nil {
+		ctx.Warnf("net.LookupIP(%s): ", domain, err)
+		return nil, err
 	}
+	for _, ip := range backendIPs {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			ctx.Warnf("IPv4 for: %s\n", ipv4)
+			return ipv4, nil
+		}
+		// TODO build IPv6 path
+	}
+	return nil, errors.New("Could not find an IP4")
+}
+
+func (p *ProxyRequest) setIpAndPort(req *ProxyRequest, ctx *goproxy.ProxyCtx) error {
+	ip, err := getIpForDomain(req.Host, ctx)
+	if err != nil {
+		return err
+	}
+	p.ipAndPort = fmt.Sprintf("%s:%s", ip, req.URL.Port())
+	return nil
+}
+
+func createTargetTlsConfig(domain string, proxyClientTlsConfig *tls.Config, proxyClientTls *tls.Conn) *tls.Config {
+	negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
+	if negotiatedProtocol == "" {
+		negotiatedProtocol = "http/1.1"
+	}
+
+	// TODO: for wip domains use the original TLS config,
+	// for everything else use default
+	var rootCAs *x509.CertPool
+	if domain == "localhost" {
+		rootCAs = proxyClientTlsConfig.RootCAs
+	}
+
+	targetTlsConfig := &tls.Config{
+		RootCAs:    rootCAs,
+		ServerName: domain,
+		NextProtos: []string{negotiatedProtocol},
+	}
+
+	return targetTlsConfig
+}
+
+func createBackendConnection(req *ProxyRequest, proxyClientTls *tls.Conn, proxyClientTlsConfig *tls.Config, targetSiteConn net.Conn, ctx *goproxy.ProxyCtx) (net.Conn, error) {
+
+	targetTlsConfig := createTargetTlsConfig(req.backendHost, proxyClientTlsConfig, proxyClientTls)
+
+	if req.URL.Scheme == "https" {
+		targetSiteTlsConn := tls.Client(targetSiteConn, targetTlsConfig)
+
+		if err := targetSiteTlsConn.Handshake(); err != nil {
+			ctx.Warnf("Cannot handshake target %v %v", req.Host, err)
+			badGatewayResponse(proxyClientTls, ctx, err)
+			return nil, err
+		}
+		return targetSiteTlsConn, nil
+	}
+	return targetSiteConn, nil
+}
+
+func badGatewayResponse(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
+	if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
+		ctx.Warnf("Error responding to client: %s", err)
+	}
+	if err := w.Close(); err != nil {
+		ctx.Warnf("Error closing client connection: %s", err)
+	}
+}
+
+func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *tls.Config, config *Config, backend string) *goproxy.ConnectAction {
+
 	notImplementedResponse := func(w io.WriteCloser, ctx *goproxy.ProxyCtx, err error) {
 		if _, err := io.WriteString(w, "HTTP/1.1 501 Not Implemented\r\n\r\n"); err != nil {
 			ctx.Warnf("Error responding to client: %s", err)
@@ -121,34 +220,23 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			}
 
 			ctx.Warnf("Assuming CONNECT is TLS, TLS proxying it")
-
-			ctx.Warnf("Hijack Request: %#v\n", req)
-			ctx.Warnf("Hijack RequestURI: %#v\n", req.RequestURI)
-			ctx.Warnf("Hijack req.Host: %#v\n", req.Host)
-			ctx.Warnf("Hijack req.URL.Path: %#v\n", req.URL.Path)
-			ctx.Warnf("Hijack req.URL.RawPath: %#v\n", req.URL.RawPath)
+			printReq("Hijack req:", req, ctx)
 
 			clientTlsReader := bufio.NewReader(proxyClientTls)
 			clientTlsWriter := bufio.NewWriter(proxyClientTls)
 			clientBuf := bufio.NewReadWriter(clientTlsReader, clientTlsWriter)
-			myReq, err := http.ReadRequest(clientBuf.Reader)
+			myReq, err := NewProxyRequest("localhost", backend, clientBuf.Reader)
 			if err != nil {
 				ctx.Warnf("Problem reading from clientBuf.Reader %#v: %v\n", clientBuf.Reader, err)
 			}
 
-			ipAndPort := backend
-
-			myReq.URL.Scheme = "https" // every request here has https
-			domain := "localhost"
+			myReq.URL.Scheme = "https" // every localhost request here has https
 
 			for _, bc := range config.backends {
-				prefix := bc.Prefix()
-
 				ctx.Warnf("try to match prefix: myReq.Host='%s', myReq.URL.Path='%s', prefix='%s'",
-					myReq.Host, myReq.URL.Path, prefix)
+					myReq.Host, myReq.URL.Path, bc.Prefix())
 
-				if strings.HasPrefix(myReq.URL.Path, prefix) ||
-					strings.HasPrefix(myReq.Host+myReq.URL.Path, prefix) {
+				if requestShouldGoToBackend(myReq.Request, bc) {
 
 					ctx.Warnf("Hijack prefix matches")
 
@@ -163,40 +251,27 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 					// 	// something went wrong and urlString is not a valid url
 					// 	return myReq, &http.Response{StatusCode: http.StatusInternalServerError}
 					// }
-					domain = url.Hostname()
-					myReq.Host = domain
+					myReq.Host = url.Hostname()
+					myReq.backendHost = url.Hostname()
 					myReq.URL = url
 					myReq.RequestURI = ""
 					myReq.Header.Add("X-Via", "symfony-cli")
 
 					// lookup IP for Host
-					backendIPs, err := net.LookupIP(domain)
+					err = myReq.setIpAndPort(myReq, ctx)
 					if err != nil {
-						ctx.Warnf("net.LookupIP(%s): ", domain, err)
 						return
 					}
-					for _, ip := range backendIPs {
-						if ipv4 := ip.To4(); ipv4 != nil {
-							ctx.Warnf("IPv4 for: %s\n", ipv4)
-							ipAndPort = fmt.Sprintf("%s:%s", ipv4, url.Port())
-							// break // not sure if we want to use the first or the last IPv4
-						}
-						// TODO build IPv6 path
-					}
+
 					break // we already found a match
 				} else {
 					ctx.Warnf("Hijack prefix didn't match")
 				}
 			}
 
-			ctx.Warnf("domain: %#v\n", domain)
-			ctx.Warnf("ipAndPort: %#v\n", ipAndPort)
-			ctx.Warnf("schema: %#v\n", myReq.URL.Scheme)
-			ctx.Warnf("Hijack myReq: %#v\n", myReq)
-			ctx.Warnf("Hijack myReq.Method: %#v\n", myReq.Method)
-			ctx.Warnf("Hijack myReq.RequestURI: %#v\n", myReq.RequestURI)
-			ctx.Warnf("Hijack myReq.URL: %#v\n", myReq.URL)
-			ctx.Warnf("Hijack myReq.URL.RawPath: %#v\n", myReq.URL.RawPath)
+			ctx.Warnf("domain: %#v\n", myReq.Host)
+			ctx.Warnf("ipAndPort: %#v\n", myReq.ipAndPort)
+			printProxyReq("Hijack myReq:", myReq, ctx)
 
 			if myReq.Method == "PRI" {
 				ctx.Warnf("This is a PRI request for HTTP/2.0, we don't serve HTTP/2.0 yet")
@@ -212,8 +287,8 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			// TODO find out why this is proxying on OSI layer 4 (tcp) and not OSI layer 7 (http)
 			// TODO we need to implement a proxy on OSI layer 7,
 			// so we can read the URI and proxy to the correct backend
-			targetSiteCon, err := connectDial(proxy, "tcp", ipAndPort)
-			defer close(targetSiteCon)
+			targetSiteConn, err := connectDial(proxy, "tcp", myReq.ipAndPort)
+			defer close(targetSiteConn)
 
 			if err != nil {
 				ctx.Warnf(`Error for connectDial(proxy, "tcp", actualBackend) = %#v\n`, err)
@@ -221,37 +296,8 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				return
 			}
 
-			negotiatedProtocol := proxyClientTls.ConnectionState().NegotiatedProtocol
-			if negotiatedProtocol == "" {
-				negotiatedProtocol = "http/1.1"
-			}
-
-			// TODO: for wip domains use the original TLS config,
-			// for everything else use default
-			var rootCAs *x509.CertPool
-			if domain == "localhost" {
-				rootCAs = proxyClientTlsConfig.RootCAs
-			}
-
-			targetTlsConfig := &tls.Config{
-				RootCAs:    rootCAs,
-				ServerName: domain,
-				NextProtos: []string{negotiatedProtocol},
-			}
-
-			backendConn := targetSiteCon
-
-			if myReq.URL.Scheme == "https" {
-				targetSiteTls := tls.Client(targetSiteCon, targetTlsConfig)
-				defer close(targetSiteTls)
-
-				if err := targetSiteTls.Handshake(); err != nil {
-					ctx.Warnf("Cannot handshake target %v %v", myReq.Host, err)
-					badGatewayResponse(proxyClientTls, ctx, err)
-					return
-				}
-				backendConn = targetSiteTls
-			}
+			backendConn, nil := createBackendConnection(myReq, proxyClientTls, proxyClientTlsConfig, targetSiteConn, ctx)
+			defer close(backendConn)
 
 			remoteBuf := bufio.NewReadWriter(bufio.NewReader(backendConn), bufio.NewWriter(backendConn))
 
@@ -283,7 +329,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				// proxy from backend to client
 				// prefixReader := prefixer.New(os.Stdout, "< ")
 
-				resp, err := http.ReadResponse(remoteBuf.Reader, myReq)
+				resp, err := http.ReadResponse(remoteBuf.Reader, myReq.Request)
 				if err != nil {
 					ctx.Warnf("Problem with http.ReadResponse, remoteBuf.Reader=%#v: %v\n", remoteBuf.Reader, err)
 				}
@@ -393,10 +439,8 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		}
 
 		req := ctx.Req
-		ctx.Warnf("Request: %#v\n", req)
-		ctx.Warnf("RequestURI: %#v\n", req.RequestURI)
-		ctx.Warnf("req.URL.Path: %#v\n", req.URL.Path)
-		ctx.Warnf("req.URL.RawPath: %#v\n", req.URL.RawPath)
+
+		printReq("HandleConnectFunc:", req, ctx)
 
 		projectDir := p.GetDir(hostName)
 		if projectDir == "" {
@@ -427,17 +471,12 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 
 	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		req := ctx.Req
-		ctx.Warnf("DoFunc Request: %#v\n", req)
-		ctx.Warnf("DoFunc RequestURI: %#v\n", req.RequestURI)
-		ctx.Warnf("DoFunc req.URL.Path: %#v\n", req.URL.Path)
-		ctx.Warnf("DoFunc req.URL.RawPath: %#v\n", req.URL.RawPath)
+		printReq("DoFunc:", req, ctx)
 
 		for _, bc := range config.backends {
-			prefix := bc.Prefix()
-			ctx.Warnf("prefix: %s", prefix)
+			ctx.Warnf("prefix: %s", bc.Prefix())
 
-			if strings.HasPrefix(req.URL.Path, prefix) ||
-				strings.HasPrefix(req.URL.Host+req.URL.Path, prefix) {
+			if requestShouldGoToBackend(req, bc) {
 
 				ctx.Warnf("DoFunc prefix matches")
 
