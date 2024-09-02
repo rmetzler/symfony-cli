@@ -81,13 +81,13 @@ func requestShouldGoToBackend(req *http.Request, bc BackendConfig) bool {
 }
 
 func printProxyReq(prefix string, req *ProxyRequest, ctx *goproxy.ProxyCtx) {
-	ctx.Warnf("%s req: %#v\n", prefix, req)
-	ctx.Warnf("%s req: %#v\n", prefix, req.Request)
-	ctx.Warnf("%s req.Schema: %#v\n", prefix, req.URL.Scheme)
-	ctx.Warnf("%s req.Method: %#v\n", prefix, req.Method)
-	ctx.Warnf("%s req.RequestURI: %#v\n", prefix, req.RequestURI)
-	ctx.Warnf("%s req.URL: %#v\n", prefix, req.URL)
-	ctx.Warnf("%s req.URL.RawPath: %#v\n", prefix, req.URL.RawPath)
+	ctx.Logf("%s req: %#v\n", prefix, req)
+	ctx.Logf("%s req: %#v\n", prefix, req.Request)
+	ctx.Logf("%s req.Schema: %#v\n", prefix, req.URL.Scheme)
+	ctx.Logf("%s req.Method: %#v\n", prefix, req.Method)
+	ctx.Logf("%s req.RequestURI: %#v\n", prefix, req.RequestURI)
+	ctx.Logf("%s req.URL: %#v\n", prefix, req.URL)
+	ctx.Logf("%s req.URL.RawPath: %#v\n", prefix, req.URL.RawPath)
 }
 
 func printReq(prefix string, req *http.Request, ctx *goproxy.ProxyCtx) {
@@ -102,7 +102,7 @@ func getIpForDomain(domain string, ctx *goproxy.ProxyCtx) (net.IP, error) {
 	}
 	for _, ip := range backendIPs {
 		if ipv4 := ip.To4(); ipv4 != nil {
-			ctx.Warnf("IPv4 for: %s\n", ipv4)
+			ctx.Logf("IPv4 for: %s\n", ipv4)
 			return ipv4, nil
 		}
 		// TODO build IPv6 path
@@ -212,8 +212,8 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 	return &goproxy.ConnectAction{
 		Action: goproxy.ConnectHijack,
 		Hijack: func(req *http.Request, proxyClient net.Conn, ctx *goproxy.ProxyCtx) {
-			ctx.Warnf("Hijacking CONNECT")
-			ctx.Warnf("HTTP method=%s\n", req.Method)
+			ctx.Logf("Hijacking CONNECT")
+			ctx.Logf("HTTP method=%s\n", req.Method)
 
 			// TODO implement HTTP/2.0 connections
 			proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
@@ -228,11 +228,11 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 					return
 				}
 
-				ctx.Logf("TLS handshake error from %s: %v", proxyClient.RemoteAddr(), err)
+				ctx.Warnf("TLS handshake error from %s: %v", proxyClient.RemoteAddr(), err)
 				return
 			}
 
-			ctx.Warnf("Assuming CONNECT is TLS, TLS proxying it")
+			ctx.Logf("Assuming CONNECT is TLS, TLS proxying it")
 			printReq("Hijack req:", req, ctx)
 
 			clientTlsReader := bufio.NewReader(proxyClientTls)
@@ -246,14 +246,14 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 			myReq.URL.Scheme = "https" // every localhost request here has https
 
 			for _, bc := range config.backends {
-				ctx.Warnf("try to match prefix: myReq.Host='%s', myReq.URL.Path='%s', prefix='%s'",
+				ctx.Logf("try to match prefix: myReq.Host='%s', myReq.URL.Path='%s', prefix='%s'",
 					myReq.Host, myReq.URL.Path, bc.Prefix())
 
 				if requestShouldGoToBackend(myReq.Request, bc) {
-					ctx.Warnf("Hijack prefix matches")
-					ctx.Warnf("myReq.URL.Path: %#v\n", myReq.URL.Path)
+					ctx.Logf("Hijack prefix matches")
+					ctx.Logf("myReq.URL.Path: %#v\n", myReq.URL.Path)
 					urlString := bc.Regexp().ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
-					ctx.Warnf("urlstring: %#v\n", urlString)
+					ctx.Logf("urlstring: %#v\n", urlString)
 
 					url, _ := url.Parse(urlString)
 					// if err != nil {
@@ -274,7 +274,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 
 					break // we already found a match
 				} else {
-					ctx.Warnf("Hijack prefix didn't match")
+					ctx.Logf("Hijack prefix didn't match")
 				}
 			}
 
