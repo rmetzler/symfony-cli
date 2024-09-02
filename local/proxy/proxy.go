@@ -116,7 +116,16 @@ func (p *ProxyRequest) setIpAndPort(req *ProxyRequest, ctx *goproxy.ProxyCtx) er
 	if err != nil {
 		return err
 	}
-	p.ipAndPort = fmt.Sprintf("%s:%s", ip, req.URL.Port())
+	port := req.URL.Port()
+	if port == "" {
+		if req.URL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	p.ipAndPort = fmt.Sprintf("%s:%s", ip, port)
 	return nil
 }
 
@@ -269,8 +278,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				}
 			}
 
-			ctx.Warnf("domain: %#v\n", myReq.Host)
-			ctx.Warnf("ipAndPort: %#v\n", myReq.ipAndPort)
 			printProxyReq("Hijack myReq:", myReq, ctx)
 
 			if myReq.Method == "PRI" {
