@@ -29,7 +29,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -237,13 +236,9 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 					myReq.Host, myReq.URL.Path, bc.Prefix())
 
 				if requestShouldGoToBackend(myReq.Request, bc) {
-
 					ctx.Warnf("Hijack prefix matches")
-
-					// TODO create regex only once in backendconfig
-					regex := regexp.MustCompile(`^` + bc.Basepath)
 					ctx.Warnf("myReq.URL.Path: %#v\n", myReq.URL.Path)
-					urlString := regex.ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
+					urlString := bc.regexp.ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
 					ctx.Warnf("urlstring: %#v\n", urlString)
 
 					url, _ := url.Parse(urlString)

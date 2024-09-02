@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2021-present Fabien Potencier <fabien@symfony.com>
+ *
  * This file is part of Symfony CLI project
  *
  * This program is free software: you can redistribute it and/or modify
@@ -18,32 +20,20 @@
 package commands
 
 import (
+	"fmt"
+
 	"github.com/symfony-cli/console"
 	"github.com/symfony-cli/symfony-cli/local/proxy"
 	"github.com/symfony-cli/symfony-cli/util"
 )
 
-var (
-	domainFlag = &console.StringFlag{
-		Name:         "domain",
-		Usage:        "domain which needs to match the request. Optional, default is '*' for all domains.",
-		DefaultValue: "*",
-	}
-	backendFlag = &console.StringFlag{
-		Name:  "backend",
-		Usage: "proxy backend, complete with schema, port, domain and path",
-	}
-	basepathFlag = &console.StringFlag{
-		Name:  "basepath",
-		Usage: "basepath to be mounted in the proxy and be replaced with the backend",
-	}
-)
 
-var localProxyAttachBackendCmd = &console.Command{
+
+var localProxyDetachBackendCmd = &console.Command{
 	Category: "local",
-	Name:     "proxy:backend:attach",
-	Aliases:  []*console.Alias{{Name: "proxy:backend:attach"}, {Name: "proxy:backend:add", Hidden: true}},
-	Usage:    "Attach a backend under a basepath for the proxy",
+	Name:     "proxy:backend:detach",
+	Aliases:  []*console.Alias{{Name: "proxy:backend:detach"}, {Name: "proxy:backend:remove", Hidden: true}},
+	Usage:    "Detach backend from the proxy",
 	Flags: []console.Flag{
 		domainFlag,
 		backendFlag,
@@ -62,7 +52,10 @@ var localProxyAttachBackendCmd = &console.Command{
 			Basepath:       c.String("basepath"),
 		}
 
-		config.AppendBackendConfig(bc)
+		err = config.RemoveBackendConfig(bc)
+		if err != nil {
+			fmt.Println(err)
+		}
 
 		err = config.Save()
 		if err != nil {
