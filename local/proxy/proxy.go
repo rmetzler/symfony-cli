@@ -309,26 +309,22 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				if err != nil {
 					ctx.Warnf("Error when calling myReq.Write(remoteBuf), myReq=%#v, remoteBuf=%#v: %v\n", myReq, remoteBuf, err)
 				}
+
 				err = remoteBuf.Flush()
 				if err != nil {
 					ctx.Warnf("Error when calling remoteBuf.Flush(), remoteBuf=%#v: %v\n", remoteBuf, err)
 				}
+
 				err = myReq.Body.Close()
 				if err != nil {
 					ctx.Warnf("Error with myReq.Body.Close(), myReq.Body=%#v: %v\n", myReq.Body, err)
 				}
 
-				// tReader := io.TeeReader(proxyClientTls, os.Stdout)
-				// if _, err := io.Copy(targetSiteTls, tReader); err != nil {
-				// 	ctx.Warnf("Error copying to client: %s", err)
-				// }
-
 				wg.Done()
 			}()
+
 			go func() {
 				// proxy from backend to client
-				// prefixReader := prefixer.New(os.Stdout, "< ")
-
 				resp, err := http.ReadResponse(remoteBuf.Reader, myReq.Request)
 				if err != nil {
 					ctx.Warnf("Problem with http.ReadResponse, remoteBuf.Reader=%#v: %v\n", remoteBuf.Reader, err)
@@ -348,12 +344,6 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				if err != nil {
 					ctx.Warnf("Problem with clientBuf.Flush(), clientBuf=%#v: %v\n", clientBuf, err)
 				}
-
-				// tReader := io.TeeReader(targetSiteTls, os.Stdout)
-				// if _, err := io.Copy(proxyClientTls, tReader); err != nil {
-				// 	ctx.Warnf("Error copying to target: %s", err)
-				// 	badGatewayResponse(proxyClientTls, ctx, err)
-				// }
 
 				wg.Done()
 			}()
