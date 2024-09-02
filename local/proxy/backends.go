@@ -17,8 +17,11 @@ type BackendConfig struct {
 	Basepath       string `json:"basepath" yaml:"basepath"`
 	BackendBaseUrl string `json:"backend"  yaml:"backend"`
 
-	regexp *regexp.Regexp // this is lazily compiled from the Basepath
 
+	// regexp is lazily compiled from the Basepath
+	// please do not call it directly, because the pointer can be nil
+	// use Regexp() instead
+	regexp *regexp.Regexp
 }
 
 func (a BackendConfig) Equals(b BackendConfig) bool {

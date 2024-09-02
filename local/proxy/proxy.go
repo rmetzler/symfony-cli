@@ -252,7 +252,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				if requestShouldGoToBackend(myReq.Request, bc) {
 					ctx.Warnf("Hijack prefix matches")
 					ctx.Warnf("myReq.URL.Path: %#v\n", myReq.URL.Path)
-					urlString := bc.regexp.ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
+					urlString := bc.Regexp().ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
 					ctx.Warnf("urlstring: %#v\n", urlString)
 
 					url, _ := url.Parse(urlString)
