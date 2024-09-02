@@ -27,8 +27,6 @@ import (
 	"github.com/symfony-cli/symfony-cli/util"
 )
 
-
-
 var localProxyDetachBackendCmd = &console.Command{
 	Category: "local",
 	Name:     "proxy:backend:detach",
