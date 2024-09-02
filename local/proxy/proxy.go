@@ -111,11 +111,7 @@ func getIpForDomain(domain string, ctx *goproxy.ProxyCtx) (net.IP, error) {
 	return nil, errors.New("Could not find an IP4")
 }
 
-func (p *ProxyRequest) setIpAndPort(req *ProxyRequest, ctx *goproxy.ProxyCtx) error {
-	ip, err := getIpForDomain(req.Host, ctx)
-	if err != nil {
-		return err
-	}
+func getPortForRequest(req *ProxyRequest) string {
 	port := req.URL.Port()
 	if port == "" {
 		if req.URL.Scheme == "https" {
@@ -124,6 +120,15 @@ func (p *ProxyRequest) setIpAndPort(req *ProxyRequest, ctx *goproxy.ProxyCtx) er
 			port = "80"
 		}
 	}
+	return port
+}
+
+func (p *ProxyRequest) setIpAndPort(req *ProxyRequest, ctx *goproxy.ProxyCtx) error {
+	ip, err := getIpForDomain(req.Host, ctx)
+	if err != nil {
+		return err
+	}
+	port := getPortForRequest(req)
 
 	p.ipAndPort = fmt.Sprintf("%s:%s", ip, port)
 	return nil
