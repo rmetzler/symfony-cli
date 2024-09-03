@@ -471,11 +471,11 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 		printReq("DoFunc:", req, ctx)
 
 		for _, bc := range config.backends {
-			ctx.Warnf("prefix: %s", bc.Prefix())
+			ctx.Logf("prefix: %s", bc.Prefix())
 
 			if requestShouldGoToBackend(req, bc) {
 
-				ctx.Warnf("DoFunc prefix matches")
+				ctx.Logf("DoFunc prefix matches")
 
 				urlString := bc.Regexp().ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
 				url, err := url.Parse(urlString)
@@ -488,7 +488,7 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 				req.Header.Add("X-Via", "symfony-cli")
 				return req, nil
 			} else {
-				ctx.Warnf("DoFunc prefix didn't match")
+				ctx.Logf("DoFunc prefix didn't match")
 			}
 		}
 
