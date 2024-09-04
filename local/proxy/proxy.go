@@ -67,19 +67,6 @@ func close(c io.Closer) {
 	}
 }
 
-// only use this for prototyping
-// func orPanic(err error) {
-// 	if err != nil {
-// 		fmt.Println("lets panic", err)
-// 		panic(err)
-// 	}
-// }
-
-func requestShouldGoToBackend(req *http.Request, bc BackendConfig) bool {
-	return strings.HasPrefix(req.URL.Path, bc.Prefix()) ||
-		strings.HasPrefix(req.Host+req.URL.Path, bc.Prefix())
-}
-
 func printProxyReq(prefix string, req *ProxyRequest, ctx *goproxy.ProxyCtx) {
 	ctx.Logf("%s req: %#v\n", prefix, req)
 	ctx.Logf("%s req: %#v\n", prefix, req.Request)
@@ -245,37 +232,29 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 
 			myReq.URL.Scheme = "https" // every localhost request here has https
 
-			for _, bc := range config.backends {
-				ctx.Logf("try to match prefix: myReq.Host='%s', myReq.URL.Path='%s', prefix='%s'",
-					myReq.Host, myReq.URL.Path, bc.Prefix())
+			bc := config.backends.FindBackendConfigMatch(myReq.Request)
+			if bc != nil {
+				ctx.Logf("Hijack prefix matches")
+				ctx.Logf("myReq.URL.Path: %#v\n", myReq.URL.Path)
+				urlString := bc.RewriteRequestPath(myReq.URL.Path)
+				ctx.Logf("urlstring: %#v\n", urlString)
 
-				if requestShouldGoToBackend(myReq.Request, bc) {
-					ctx.Logf("Hijack prefix matches")
-					ctx.Logf("myReq.URL.Path: %#v\n", myReq.URL.Path)
-					urlString := bc.Regexp().ReplaceAllLiteralString(myReq.URL.Path, bc.BackendBaseUrl)
-					ctx.Logf("urlstring: %#v\n", urlString)
+				url, _ := url.Parse(urlString)
 
-					url, _ := url.Parse(urlString)
-					// if err != nil {
-					// 	// something went wrong and urlString is not a valid url
-					// 	return myReq, &http.Response{StatusCode: http.StatusInternalServerError}
-					// }
-					myReq.Host = url.Hostname()
-					myReq.backendHost = url.Hostname()
-					myReq.URL = url
-					myReq.RequestURI = ""
-					myReq.Header.Add("X-Via", "symfony-cli")
+				myReq.Host = url.Hostname()
+				myReq.backendHost = url.Hostname()
+				myReq.URL = url
+				myReq.RequestURI = ""
+				myReq.Header.Add("X-Via", "symfony-cli")
 
-					// lookup IP for Host
-					err = myReq.setIpAndPort(myReq, ctx)
-					if err != nil {
-						return
-					}
-
-					break // we already found a match
-				} else {
-					ctx.Logf("Hijack prefix didn't match")
+				// lookup IP for Host
+				err = myReq.setIpAndPort(myReq, ctx)
+				if err != nil {
+					return
 				}
+
+			} else {
+				ctx.Logf("Hijack prefix didn't match")
 			}
 
 			printProxyReq("Hijack myReq:", myReq, ctx)
@@ -467,30 +446,17 @@ func New(config *Config, ca *cert.CA, logger *log.Logger, debug bool) *Proxy {
 	})
 
 	cond.DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		// TODO why don't we use r but ctx.Req ?
 		req := ctx.Req
 		printReq("DoFunc:", req, ctx)
 
-		for _, bc := range config.backends {
-			ctx.Logf("prefix: %s", bc.Prefix())
-
-			if requestShouldGoToBackend(req, bc) {
-
-				ctx.Logf("DoFunc prefix matches")
-
-				urlString := bc.Regexp().ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
-				url, err := url.Parse(urlString)
-				if err != nil {
-					// something went wrong and urlString is not a valid url
-					return req, &http.Response{StatusCode: http.StatusInternalServerError}
-				}
-				req.Host = url.Host
-				req.URL = url
-				req.Header.Add("X-Via", "symfony-cli")
-				return req, nil
-			} else {
-				ctx.Logf("DoFunc prefix didn't match")
-			}
+		bc := config.backends.FindBackendConfigMatch(req)
+		if bc != nil {
+			ctx.Logf("DoFunc prefix matches")
+			return bc.RewriteRequest(ctx.Req)
 		}
+
+		ctx.Logf("DoFunc prefix didn't match")
 
 		hostName, hostPort, err := net.SplitHostPort(r.Host)
 		if err != nil {
