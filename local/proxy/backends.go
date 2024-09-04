@@ -38,6 +38,7 @@ func (bc BackendConfig) Prefix() string {
 		prefix = bc.Basepath
 	} else {
 		// TODO we need the TLD from somewhere else
+		// maybe needs to be added to the domain?
 		tld := ".wip"
 		prefix = bc.Domain + tld + bc.Basepath
 	}
@@ -65,6 +66,7 @@ func (c *Config) RemoveBackendConfig(conf BackendConfig) error {
 	return nil
 }
 
+// TODO probably not needed
 // lazily compile the Regexp from the Basepath
 func (bc *BackendConfig) Regexp() *regexp.Regexp {
 	if bc.regexp == nil {
