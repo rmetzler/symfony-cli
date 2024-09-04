@@ -23,11 +23,26 @@ type BackendConfig struct {
 	regexp *regexp.Regexp
 }
 
+// TODO not sure, maybe we should use "" as "all domains"
+// and only print "*" when we communicate with the user
+func domainAsterisk(d string) string {
+	if d == "" {
+		return "*"
+	}
+	return d
+}
+
+// TODO: maybe use DeepEquals
 func (a *BackendConfig) Equals(b *BackendConfig) bool {
+	if b == nil {
+		return false
+	}
 	if a == b {
 		return true
 	}
-	return a.Domain == b.Domain &&
+	aDomain := domainAsterisk(a.Domain)
+	bDomain := domainAsterisk(b.Domain)
+	return aDomain == bDomain &&
 		a.Basepath == b.Basepath &&
 		a.BackendBaseUrl == b.BackendBaseUrl
 }
