@@ -1,3 +1,4 @@
 /dist
 /vendor
 symfony-cli
+commands/testdata/project/

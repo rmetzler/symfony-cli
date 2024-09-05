@@ -23,9 +23,17 @@ type BackendConfig struct {
 	regexp *regexp.Regexp
 }
 
+func NewBackendConfig(domain, basepath, backendBaseUrl string) *BackendConfig {
+	return &BackendConfig{
+		Domain:         normalizeDomain(domain),
+		Basepath:       basepath,
+		BackendBaseUrl: backendBaseUrl,
+	}
+}
+
 // TODO not sure, maybe we should use "" as "all domains"
 // and only print "*" when we communicate with the user
-func domainAsterisk(d string) string {
+func normalizeDomain(d string) string {
 	if d == "" {
 		return "*"
 	}
@@ -40,8 +48,8 @@ func (a *BackendConfig) Equals(b *BackendConfig) bool {
 	if a == b {
 		return true
 	}
-	aDomain := domainAsterisk(a.Domain)
-	bDomain := domainAsterisk(b.Domain)
+	aDomain := normalizeDomain(a.Domain)
+	bDomain := normalizeDomain(b.Domain)
 	return aDomain == bDomain &&
 		a.Basepath == b.Basepath &&
 		a.BackendBaseUrl == b.BackendBaseUrl
