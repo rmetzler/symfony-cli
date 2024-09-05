@@ -30,12 +30,14 @@ var (
 		DefaultValue: "*",
 	}
 	backendFlag = &console.StringFlag{
-		Name:  "backend",
-		Usage: "proxy backend, complete with schema, port, domain and path",
+		Name:     "backend",
+		Usage:    "proxy backend, complete with schema, port, domain and path",
+		Required: true,
 	}
 	basepathFlag = &console.StringFlag{
-		Name:  "basepath",
-		Usage: "basepath to be mounted in the proxy and be replaced with the backend",
+		Name:     "basepath",
+		Usage:    "basepath to be mounted in the proxy and be replaced with the backend",
+		Required: true,
 	}
 )
 
