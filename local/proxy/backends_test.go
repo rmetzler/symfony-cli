@@ -13,38 +13,38 @@ func TestEquals(t *testing.T) {
 	}{
 		{
 			"equals", true,
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
+			NewBackendConfig("a", "b", "c"),
+			NewBackendConfig("a", "b", "c"),
 		},
 		{
 			"Domain not equal", false,
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "x", Basepath: "b", BackendBaseUrl: "c"},
+			NewBackendConfig("a", "b", "c"),
+			NewBackendConfig("x", "b", "c"),
 		},
 		{
 			"Basepath not equal", false,
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "a", Basepath: "", BackendBaseUrl: "c"},
+			NewBackendConfig("a", "b", "c"),
+			NewBackendConfig("a", "", "c"),
 		},
 		{
 			"BackendBaseUrl not equal", false,
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "cc"},
+			NewBackendConfig("a", "b", "c"),
+			NewBackendConfig("a", "b", "cc"),
 		},
 		{
 			"nil", false,
-			&BackendConfig{Domain: "a", Basepath: "b", BackendBaseUrl: "c"},
+			NewBackendConfig("a", "b", "c"),
 			nil,
 		},
 		{
 			"Domain '*' should be the same as empty string", true,
-			&BackendConfig{Domain: "", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "*", Basepath: "b", BackendBaseUrl: "c"},
+			NewBackendConfig("", "b", "c"),
+			NewBackendConfig("*", "b", "c"),
 		},
 		{
 			"Domain '*' should be the same as empty string 2", true,
-			&BackendConfig{Domain: "*", Basepath: "b", BackendBaseUrl: "c"},
-			&BackendConfig{Domain: "", Basepath: "b", BackendBaseUrl: "c"},
+			NewBackendConfig("*", "b", "c"),
+			NewBackendConfig("", "b", "c"),
 		},
 	}
 	for _, tt := range testCases {
