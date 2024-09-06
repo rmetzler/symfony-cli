@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
+)
+
+const (
+	MATCH_ALL_DOMAINS string = "*"
 )
 
 type BackendConfigList []*BackendConfig
@@ -15,12 +18,6 @@ type BackendConfig struct {
 	Domain         string `json:"domain"   yaml:"domain"`
 	Basepath       string `json:"basepath" yaml:"basepath"`
 	BackendBaseUrl string `json:"backend"  yaml:"backend"`
-
-	// TODO maybe not needed
-	// regexp is lazily compiled from the Basepath
-	// please do not call it directly, because the pointer can be nil
-	// use Regexp() instead
-	regexp *regexp.Regexp
 }
 
 func NewBackendConfig(domain, basepath, backendBaseUrl string) *BackendConfig {
@@ -35,9 +32,17 @@ func NewBackendConfig(domain, basepath, backendBaseUrl string) *BackendConfig {
 // and only print "*" when we communicate with the user
 func normalizeDomain(d string) string {
 	if d == "" {
-		return "*"
+		return MATCH_ALL_DOMAINS
 	}
 	return d
+}
+
+func (bc *BackendConfig) NormDomain() string {
+	return normalizeDomain(bc.Domain)
+}
+
+func (bc *BackendConfig) MatchesAllDomains() bool {
+	return bc.NormDomain() == MATCH_ALL_DOMAINS
 }
 
 // TODO: maybe use DeepEquals
@@ -55,19 +60,20 @@ func (a *BackendConfig) Equals(b *BackendConfig) bool {
 		a.BackendBaseUrl == b.BackendBaseUrl
 }
 
-func (bc BackendConfig) Prefix() string {
-	var prefix string
-	if (bc.Domain == "") || (bc.Domain == "*") {
-		prefix = bc.Basepath
-	} else {
-		// TODO we need the TLD from somewhere else
-		// maybe needs to be added to the domain?
-		tld := ".wip"
-		prefix = bc.Domain + tld + bc.Basepath
+func (bc *BackendConfig) Prefix() string {
+	if bc.MatchesAllDomains() {
+		return bc.Basepath
 	}
-	return prefix
+
+	// TODO we need the TLD from somewhere else
+	// maybe needs to be added to the domain?
+	tld := ".wip"
+	return bc.Domain + tld + bc.Basepath
 }
 
+/**************************************
+*** BackendConfigList starts here   ***
+**************************************/
 func (c *Config) AppendBackendConfig(conf BackendConfig) {
 	fmt.Printf("append backend %#v to %#v\n", conf, c.backends)
 	c.backends = append(c.backends, &conf)
@@ -87,15 +93,6 @@ func (c *Config) RemoveBackendConfig(conf BackendConfig) error {
 	}
 	c.backends = backends
 	return nil
-}
-
-// TODO probably not needed
-// lazily compile the Regexp from the Basepath
-func (bc *BackendConfig) Regexp() *regexp.Regexp {
-	if bc.regexp == nil {
-		bc.regexp = regexp.MustCompile(`^` + bc.Basepath)
-	}
-	return bc.regexp
 }
 
 func (bcList BackendConfigList) FindBackendConfigMatch(req *http.Request) *BackendConfig {
@@ -124,7 +121,6 @@ func (bc *BackendConfig) RewriteRequestPath(requestPath string) string {
 }
 
 func (bc *BackendConfig) RewriteRequest(req *http.Request) (*http.Request, *http.Response) {
-	// urlString := bc.Regexp().ReplaceAllLiteralString(req.URL.Path, bc.BackendBaseUrl)
 	urlString := bc.RewriteRequestPath(req.URL.Path)
 
 	url, err := url.Parse(urlString)
