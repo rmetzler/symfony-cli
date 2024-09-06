@@ -230,7 +230,7 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				ctx.Warnf("Problem reading from clientBuf.Reader %#v: %v\n", clientBuf.Reader, err)
 			}
 
-			myReq.URL.Scheme = "https" // every localhost request here has https
+			myReq.URL.Scheme = pid.New(config.GetDir(myReq.Host), nil).Scheme
 
 			bc := config.backends.FindBackendConfigMatch(myReq.Request)
 			if bc != nil {
