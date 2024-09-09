@@ -232,7 +232,7 @@ func (s *ProxySuite) TestProxy(c *C) {
 		body, _ := io.ReadAll(res.Body)
 		c.Assert(res.StatusCode, Equals, http.StatusOK)
 		c.Assert(string(body), Equals, "http://symfony-no-tls.wip")
-		backendProcess.pid()
+		backendProcess.stop()
 
 	}
 
@@ -252,9 +252,23 @@ func (s *ProxySuite) TestProxy(c *C) {
 	}
 	// Test send request to the general http backend
 	{
-		fmt.Printf("\nKMD Test general http backend\n")
+		fmt.Printf("\nKMD Test general http backend via http call\n")
 		for domain, _ := range p.Config.domains {
 			req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s.wip/star", domain), nil)
+			req.Close = true
+
+			res, err := client.Do(req)
+			c.Assert(err, IsNil)
+			body, _ := io.ReadAll(res.Body)
+			c.Assert(res.StatusCode, Equals, http.StatusOK)
+			c.Assert(string(body), Equals, "general backend")
+		}
+	}
+
+	{
+		fmt.Printf("\nKMD Test general http backend via https call \n")
+		for domain, _ := range p.Config.domains {
+			req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s.wip/star", domain), nil)
 			req.Close = true
 
 			res, err := client.Do(req)
