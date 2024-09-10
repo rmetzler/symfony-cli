@@ -22,15 +22,18 @@ package proxy
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mitchellh/go-homedir"
@@ -39,6 +42,28 @@ import (
 	"github.com/symfony-cli/symfony-cli/local/pid"
 	. "gopkg.in/check.v1"
 )
+
+type dummyPhpBackend struct {
+	cmd *exec.Cmd
+}
+
+func start(projectDir string, port int, proto string) dummyPhpBackend {
+	p := pid.New(projectDir, nil)
+	cmd := exec.Command("sleep", "5")
+	cmd.Start()
+	p.Write(cmd.Process.Pid, port, proto)
+	return dummyPhpBackend{cmd}
+
+}
+
+func (d *dummyPhpBackend) pid() int {
+	return d.cmd.Process.Pid
+}
+
+func (d *dummyPhpBackend) stop() {
+	syscall.Kill(d.cmd.Process.Pid, syscall.SIGTERM)
+	d.cmd.Wait()
+}
 
 func (s *ProxySuite) TestProxy(c *C) {
 	ca, err := cert.NewCA(filepath.Join("testdata/certs"))
@@ -50,15 +75,25 @@ func (s *ProxySuite) TestProxy(c *C) {
 	defer homedir.Reset()
 	defer os.RemoveAll("testdata/.symfony5")
 
+	generalBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`general backend`))
+	}))
+	defer generalBackend.Close()
+
 	p := New(
 		&Config{
 			domains: map[string]string{
-				"symfony":        "symfony_com",
-				"symfony-no-tls": "symfony_com_no_tls",
-				"symfony2":       "symfony_com2",
+				"symfony":             "symfony_com",
+				"symfony-not-started": "symfony_com_not_started",
+				"symfony-no-tls":      "symfony_com_no_tls",
+				"symfony2":            "symfony_com2",
 			},
 			TLD:  "wip",
 			path: "testdata/.symfony5/proxy.json",
+			backends: BackendConfigList{
+				&BackendConfig{Domain: "*", Basepath: "/star", BackendBaseUrl: generalBackend.URL},
+			},
 		},
 		ca,
 		log.New(zerolog.New(os.Stderr), "", 0),
@@ -121,6 +156,7 @@ func (s *ProxySuite) TestProxy(c *C) {
 
 	// Test proxying a request to a non-registered project
 	{
+		fmt.Printf("\nKMDebug Test foo\n")
 		req, _ := http.NewRequest("GET", "https://foo.wip/", nil)
 		req.Close = true
 
@@ -133,7 +169,8 @@ func (s *ProxySuite) TestProxy(c *C) {
 
 	// Test proxying a request to a registered project but not started
 	{
-		req, _ := http.NewRequest("GET", "https://symfony.wip/", nil)
+		fmt.Printf("\nKMDebug Test symfony not running\n")
+		req, _ := http.NewRequest("GET", "https://symfony-not-started.wip/", nil)
 		req.Close = true
 
 		res, err := client.Do(req)
@@ -142,39 +179,41 @@ func (s *ProxySuite) TestProxy(c *C) {
 		body, _ := io.ReadAll(res.Body)
 		c.Check(strings.Contains(string(body), "not started"), Equals, true)
 	}
-	/*
-		// Test proxying a request to a registered project and started
-		{
-			backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(200)
-				w.Write([]byte(`symfony.wip`))
-			}))
-			cert, err := ca.CreateCert([]string{"localhost", "127.0.0.1"})
-			c.Assert(err, IsNil)
-			backend.TLS = &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			}
-			backend.StartTLS()
-			defer backend.Close()
-			backendURL, err := url.Parse(backend.URL)
-			c.Assert(err, IsNil)
 
-			p := pid.New("symfony_com", nil)
-			port, _ := strconv.Atoi(backendURL.Port())
-			p.Write(os.Getpid(), port, "https")
-
-			req, _ := http.NewRequest("GET", "https://symfony.wip/", nil)
-			req.Close = true
-
-			res, err := client.Do(req)
-			c.Assert(err, IsNil)
-			c.Assert(res.StatusCode, Equals, http.StatusOK)
-			body, _ := io.ReadAll(res.Body)
-			c.Check(string(body), Equals, "symfony.wip")
+	// Test proxying a request to a registered project and started
+	{
+		backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte(`symfony.wip`))
+		}))
+		cert, err := ca.CreateCert([]string{"localhost", "127.0.0.1"})
+		c.Assert(err, IsNil)
+		backend.TLS = &tls.Config{
+			Certificates: []tls.Certificate{cert},
 		}
-	*/
+		backend.StartTLS()
+		defer backend.Close()
+		backendURL, err := url.Parse(backend.URL)
+		c.Assert(err, IsNil)
+
+		port, _ := strconv.Atoi(backendURL.Port())
+		backendProcess := start("symfony_com", port, "https")
+
+		req, _ := http.NewRequest("GET", "https://symfony.wip/", nil)
+		req.Close = true
+
+		res, err := client.Do(req)
+		c.Assert(err, IsNil)
+		c.Assert(res.StatusCode, Equals, http.StatusOK)
+		body, _ := io.ReadAll(res.Body)
+		c.Check(string(body), Equals, "symfony.wip")
+
+		backendProcess.stop()
+	}
+
 	// Test proxying a request to a registered project but no TLS
 	{
+		fmt.Printf("\nKMDebug Test symfony running without tls\n")
 		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 			w.Write([]byte(`http://symfony-no-tls.wip`))
@@ -183,9 +222,8 @@ func (s *ProxySuite) TestProxy(c *C) {
 		backendURL, err := url.Parse(backend.URL)
 		c.Assert(err, IsNil)
 
-		p := pid.New("symfony_com_no_tls", nil)
 		port, _ := strconv.Atoi(backendURL.Port())
-		p.Write(os.Getpid(), port, "http")
+		backendProcess := start("symfony_com_no_tls", port, "http")
 
 		req, _ := http.NewRequest("GET", "http://symfony-no-tls.wip/", nil)
 		req.Close = true
@@ -195,10 +233,13 @@ func (s *ProxySuite) TestProxy(c *C) {
 		body, _ := io.ReadAll(res.Body)
 		c.Assert(res.StatusCode, Equals, http.StatusOK)
 		c.Assert(string(body), Equals, "http://symfony-no-tls.wip")
+		backendProcess.stop()
+
 	}
 
 	// Test proxying a request to an outside backend
 	{
+		fmt.Printf("\nKMDebug Test outside backend\n")
 		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 		}))
@@ -210,6 +251,87 @@ func (s *ProxySuite) TestProxy(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(res.StatusCode, Equals, http.StatusOK)
 	}
+	// Test send request to the general http backend
+	{
+		fmt.Printf("\nKMDebug Test general http backend via http call\n")
+		for domain, _ := range p.Config.domains {
+			req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s.wip/star", domain), nil)
+			req.Close = true
+
+			res, err := client.Do(req)
+			c.Assert(err, IsNil)
+			body, _ := io.ReadAll(res.Body)
+			c.Assert(res.StatusCode, Equals, http.StatusOK)
+			c.Assert(string(body), Equals, "general backend")
+		}
+	}
+
+	{
+		fmt.Printf("\nKMDebug Test general http backend via https call \n")
+		for domain, _ := range p.Config.domains {
+			req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s.wip/star", domain), nil)
+			req.Close = true
+
+			res, err := client.Do(req)
+			c.Assert(err, IsNil)
+			body, _ := io.ReadAll(res.Body)
+			c.Assert(res.StatusCode, Equals, http.StatusOK)
+			c.Assert(string(body), Equals, "general backend")
+		}
+	}
+	// Test send request to the general http backend for https call with running backend
+	{
+		fmt.Printf("\nKMDebug Test general https backend \n")
+		domain := "symfony"
+		backendProcess := start(p.Config.domains[domain], 0, "http")
+
+		req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s.wip/star", domain), nil)
+		req.Close = true
+
+		res, err := client.Do(req)
+		c.Assert(err, IsNil)
+		body, _ := io.ReadAll(res.Body)
+		c.Assert(res.StatusCode, Equals, http.StatusOK)
+		c.Assert(string(body), Equals, "general backend")
+		backendProcess.stop()
+	}
+
+	// Test send request to the specific http backend for https call with running backend
+	{
+		fmt.Printf("\nKMDebug Test specific https backend \n")
+
+		specificBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte(`specific backend`))
+		}))
+		defer specificBackend.Close()
+
+		domain := "symfony"
+		p.Config.backends = append(p.Config.backends, &BackendConfig{Domain: domain, Basepath: "/specific", BackendBaseUrl: specificBackend.URL})
+
+		backendProcess := start(p.Config.domains[domain], 0, "http")
+
+		req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s.wip/specific", domain), nil)
+		req.Close = true
+
+		res, err := client.Do(req)
+		c.Assert(err, IsNil)
+		body, _ := io.ReadAll(res.Body)
+		c.Assert(res.StatusCode, Equals, http.StatusOK)
+		c.Assert(string(body), Equals, "specific backend")
+
+		// request does not send to backend for a different domain
+		req, _ = http.NewRequest("GET", fmt.Sprintf("https://%s.wip/specific", "symfony2"), nil)
+		req.Close = true
+
+		res, err = client.Do(req)
+		c.Assert(err, IsNil)
+		c.Assert(res.StatusCode, Equals, http.StatusNotFound)
+		body, _ = io.ReadAll(res.Body)
+		c.Check(strings.Contains(string(body), "not started"), Equals, true)
+		backendProcess.stop()
+	}
+
 	/*
 		// Test proxying a request over HTTP2
 		http2.ConfigureTransport(transport)
