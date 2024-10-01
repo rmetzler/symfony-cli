@@ -282,7 +282,11 @@ func tlsToLocalWebServer(proxy *goproxy.ProxyHttpServer, proxyClientTlsConfig *t
 				return
 			}
 
-			backendConn, nil := createBackendConnection(myReq, proxyClientTls, proxyClientTlsConfig, targetSiteConn, ctx)
+			backendConn, err := createBackendConnection(myReq, proxyClientTls, proxyClientTlsConfig, targetSiteConn, ctx)
+			if err != nil {
+				badGatewayResponse(proxyClientTls, ctx, err)
+				return
+			}
 			defer close(backendConn)
 
 			remoteBuf := bufio.NewReadWriter(bufio.NewReader(backendConn), bufio.NewWriter(backendConn))
